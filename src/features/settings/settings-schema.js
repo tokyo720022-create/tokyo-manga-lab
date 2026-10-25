@@ -3,6 +3,7 @@
 // Item types
 //   toggle   - on/off, saved under `key`
 //   select   - one of `options`, saved under `key`
+//   themes   - the colour theme picker (cards with a colour preview), saved under `key`
 //   action   - a button; `action` is a data-action name handled in app.js
 //   link     - opens an https URL in a new tab
 //   text     - short text, saved under `key` (use `inputMode` and `placeholder`)
@@ -14,6 +15,7 @@
 // To add a setting: add the key to DEFAULT_SETTINGS in settings-service.js, then add an item here.
 import { APP_NAME, APP_VERSION, MANGADEX_URL, REPO_URL } from '../../shared/app-info.js';
 import { API_BASE_URL } from '../../services/api-client.js';
+import { THEME_OPTIONS } from '../theme/themes.js';
 
 export const CHAPTER_LANGUAGES = Object.freeze([
   ['en', 'English'], ['es', 'Spanish'], ['fr', 'French'], ['de', 'German'], ['pt', 'Portuguese'], ['it', 'Italian'],
@@ -36,8 +38,8 @@ export const SETTINGS_CATEGORIES = Object.freeze([
     id: 'appearance', section: 'app', title: 'Appearance', icon: 'palette', summary: 'Theme and covers', valueFrom: 'theme',
     groups: [
       { id: 'theme', title: 'Theme', items: [
-        { type: 'select', key: 'theme', title: 'Colour theme', description: 'Sakura Night or Midnight Blue.', options: [['sakura', 'Sakura Night'], ['midnight', 'Midnight Blue']] },
-        { type: 'planned', id: 'accent-colour', title: 'Accent colour', description: 'Pick your own accent.' },
+        { type: 'themes', key: 'theme', title: 'Colour theme', description: 'Pick a look. The moon button at the top cycles through them.', options: THEME_OPTIONS },
+        { type: 'planned', id: 'accent-colour', title: 'Custom accent colour', description: 'Pick your own accent.' },
         { type: 'planned', id: 'pure-black', title: 'Pure black mode', description: 'True black backgrounds for AMOLED screens.' }
       ] },
       { id: 'display', title: 'Display', items: [
@@ -105,7 +107,7 @@ export const SETTINGS_CATEGORIES = Object.freeze([
       ] },
       { id: 'safety', title: 'Content safety', items: [
         { type: 'toggle', key: 'adultContentEnabled', title: 'Adult-content preference', badge: 'Android app', description: 'Off by default. A preference on this device, not age verification. Adds titles rated erotica or pornographic.' },
-        { type: 'info', title: 'Catalogue ratings', valueFrom: 'ratings', description: 'Titles tagged loli or shota are never shown.' }
+        { type: 'info', title: 'Catalogue ratings', valueFrom: 'ratings', description: 'Titles tagged loli or shota are never shown, except safe-rated titles you reviewed by hand.' }
       ] }
     ]
   },

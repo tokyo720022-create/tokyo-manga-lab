@@ -12,7 +12,7 @@ The phases are ordered by dependencies. Do not attempt all future features in th
 **Exit criteria:** clear list of verified working features and known issues.
 
 ## Phase 1 — Manga V1 foundation
-- UI shell and Sakura/AMOLED themes.
+- UI shell and ten colour themes (Settings > Appearance).
 - Search/pagination using MangaDex through Worker.
 - Normalized title cards and metadata details.
 - Chapter metadata list linking to original source.

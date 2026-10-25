@@ -134,3 +134,16 @@
 - It is saved on the device, so it still shows offline, and refreshed in the background at most every 15 minutes. If follower counts cannot be loaded the strip shows chapters read instead. Images are only accepted from AniList's own https image hosts.
 - Your local library numbers stay under "In this app". The sync card now says when you last synced. Signed out, Profile is unchanged.
 - Tests: 154 unit tests; new browser suite `profile_e2e.py` (12 suites in all). Not yet checked against live AniList: the profile and follower queries were written to AniList's documented schema and tested against a mock.
+
+## 0.10.0 - Ten themes and a tidier Profile banner (first public release)
+- **Eight new themes** next to Sakura Night and Midnight Blue: Sakura Flowers (light), One Piece, Naruto, Gintama (the special one: Edo wave pattern, silver-to-pink buttons), Dragon Ball, Bleach, Rent-a-Girlfriend (light) and Attack on Titan. Colours and faint CSS patterns only; no artwork, logos or characters. Docs: `docs/THEMES.md`.
+- **Theme picker** in Settings > Appearance: a card per theme with a colour preview and a "Special" tag on Gintama. The moon button at the top now cycles through all themes. The browser bar and form controls follow the theme, light or dark.
+- **Readable everywhere:** a new test checks text, muted text, button labels and accents against each theme's backgrounds (contrast ratios) so a new theme cannot ship unreadable. Borders and status colours that were fixed for dark themes now follow the theme.
+- **Profile banner fixed:** the AniList banner is shown at its natural wide shape (about 3:1) instead of being zoomed and cropped, and the avatar and name now sit under it on the left so they no longer cover the banner artwork.
+- README rewritten for the public release (it still described an early preview).
+- Tests: 158 unit tests; 13 browser suites (new: themes).
+
+## 0.10.1 - Reviewed exceptions for wrongly blocked titles
+- **Worker (needs a redeploy):** a short, hand-kept list `REVIEWED_EXCEPTIONS` in `worker/src/index.js` lets a title through that the loli/shota tag block hides although it is not sexual. A listed title is shown only when MangaDex rates it **safe** (suggestive, erotica and pornographic stay blocked, with or without the 18+ toggle), and unlisted titles stay blocked. The shipped list is empty. Listed titles are found by searching their name and open normally, chapters and reader included. See `docs/EXCEPTIONS.md`.
+- The Catalogue ratings note in Settings mentions the exception.
+- Tests: 166 unit tests.

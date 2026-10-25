@@ -7,7 +7,7 @@ import { FEATURES, featuresFor } from '../src/features/feature-registry.js';
 import { PROFILE_GROUPS, plannedProfileRows } from '../src/features/profile/profile-sections.js';
 import { parseRoute } from '../src/core/router.js';
 
-const ITEM_TYPES = new Set(['toggle', 'select', 'action', 'link', 'info', 'text', 'planned']);
+const ITEM_TYPES = new Set(['toggle', 'select', 'action', 'link', 'info', 'text', 'themes', 'planned']);
 
 test('settings categories have unique ids, titles and valid icons', () => {
   const ids = SETTINGS_CATEGORIES.map(category => category.id);

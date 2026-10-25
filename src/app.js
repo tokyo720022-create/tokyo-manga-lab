@@ -37,6 +37,7 @@ import { ANILIST_APPS_URL, ANILIST_REGISTER_URL, loginAvailability, resolveClien
 import { clearAuthAttempt, getAccount, getAuthAttempt, markAuthAttempt } from './features/anilist/anilist-store.js';
 import { closeAuthPage, isNativeApp, listenForAppLinks, openAuthPage } from './features/anilist/anilist-native.js';
 import { connectWithToken, describeAccount, describeSummary, disconnect as disconnectAniList, flushOutbox, notifyLocalChange, refreshProfile, runSync } from './features/anilist/anilist-sync.js';
+import { THEMES, findTheme, nextTheme } from './features/theme/themes.js';
 import { profileIsStale } from './features/anilist/anilist-profile.js';
 
 const root = document.getElementById('appView');
@@ -439,10 +440,10 @@ function profileHeroMarkup() {
   const banner = profile?.bannerUrl;
   const link = profile?.siteUrl || account?.viewer?.siteUrl || '';
   const safeLink = /^https:\/\/anilist\.co\//.test(link) ? link : '';
-  const avatarMarkup = avatar ? `<img class="profile-avatar" src="${escapeHtml(avatar)}" alt="" width="88" height="88" decoding="async" referrerpolicy="no-referrer">` : `<span class="profile-avatar profile-avatar-fallback" aria-hidden="true">${escapeHtml(name.slice(0, 1).toUpperCase())}</span>`;
+  const avatarMarkup = avatar ? `<img class="profile-avatar" src="${escapeHtml(avatar)}" alt="" width="84" height="84" decoding="async" referrerpolicy="no-referrer">` : `<span class="profile-avatar profile-avatar-fallback" aria-hidden="true">${escapeHtml(name.slice(0, 1).toUpperCase())}</span>`;
   return `<div class="profile-hero" id="profileHero">
     <div class="profile-banner">${banner ? `<img src="${escapeHtml(banner)}" alt="" decoding="async" referrerpolicy="no-referrer">` : ''}</div>
-    <div class="profile-hero-body">${avatarMarkup}<h1>${escapeHtml(name)}</h1>${safeLink ? `<a class="pill-label accent" href="${escapeHtml(safeLink)}" target="_blank" rel="noopener noreferrer">View on AniList ${icon('external', 'icon-sm')}</a>` : '<span class="pill-label accent">AniList</span>'}</div>
+    <div class="profile-hero-body">${avatarMarkup}<div class="profile-hero-text"><h1>${escapeHtml(name)}</h1>${safeLink ? `<a class="pill-label accent" href="${escapeHtml(safeLink)}" target="_blank" rel="noopener noreferrer">View on AniList ${icon('external', 'icon-sm')}</a>` : '<span class="pill-label accent">AniList</span>'}</div></div>
   </div>`;
 }
 
@@ -641,6 +642,10 @@ function settingRow(item) {
   const copy = `<span class="row-copy"><strong>${escapeHtml(item.title)}</strong>${item.description || tag ? `<small>${tag}${escapeHtml(item.description || '')}</small>` : ''}</span>`;
   if (item.type === 'toggle') {
     return `<label class="row">${copy}<span class="row-trail"><span class="switch"><input type="checkbox" data-setting="${item.key}" ${s[item.key] ? 'checked' : ''}><span class="switch-track"></span></span></span></label>`;
+  }
+  if (item.type === 'themes') {
+    const cards = THEMES.map(theme => `<label class="theme-card"><input type="radio" name="theme" value="${escapeHtml(theme.id)}" data-setting="theme" ${s.theme === theme.id ? 'checked' : ''}><span class="theme-card-body"><span class="theme-swatch" style="--s1:${theme.swatch[0]};--s2:${theme.swatch[1]};--s3:${theme.swatch[2]}" aria-hidden="true"></span><span class="theme-name">${escapeHtml(theme.name)}${theme.special ? '<span class="badge-note">Special</span>' : ''}</span><small>${escapeHtml(theme.note)}</small></span></label>`).join('');
+    return `<div class="row row-stack">${copy}<div class="theme-grid" role="radiogroup" aria-label="${escapeHtml(item.title)}">${cards}</div></div>`;
   }
   if (item.type === 'select') {
     const options = item.options.map(([value, label]) => `<option value="${escapeHtml(value)}" ${s[item.key] === value ? 'selected' : ''}>${escapeHtml(label)}</option>`).join('');
@@ -1445,13 +1450,13 @@ async function uploadBackupFile(file) {
 }
 
 function applyTheme() {
-  const isMidnight = state.settings?.theme === 'midnight';
+  const theme = findTheme(state.settings?.theme);
   const root = document.documentElement;
-  root.dataset.theme = isMidnight ? 'midnight' : 'sakura';
+  root.dataset.theme = theme.id;
   root.dataset.coverSize = state.settings?.coverSize === 'compact' ? 'compact' : 'comfortable';
-  root.style.colorScheme = 'dark';
+  root.style.colorScheme = theme.scheme;
   root.classList.toggle('reduce-motion', Boolean(state.settings?.reducedMotion));
-  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', isMidnight ? '#070b13' : '#0a0910');
+  document.querySelector('meta[name="theme-color"]')?.setAttribute('content', theme.bar);
 }
 
 // Adult MangaDex ratings: Android app only, off by default, and never age verification.
@@ -1507,11 +1512,11 @@ async function handleAction(action, target) {
   const id = target.dataset.id;
   switch (action) {
     case 'toggle-theme': {
-      const theme = state.settings?.theme === 'midnight' ? 'sakura' : 'midnight';
-      await saveSetting('theme', theme);
-      state.settings = { ...state.settings, theme };
+      const theme = nextTheme(state.settings?.theme);
+      await saveSetting('theme', theme.id);
+      state.settings = { ...state.settings, theme: theme.id };
       applyTheme();
-      toast(theme === 'midnight' ? 'Midnight Blue theme enabled.' : 'Sakura Night theme enabled.');
+      toast(`${theme.name} theme.`);
       if (app.currentRoute() === 'settings') await app.navigate('settings');
       break;
     }

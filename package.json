@@ -1,6 +1,6 @@
 {
   "name": "tokyo-manga-lab",
-  "version": "0.9.7",
+  "version": "0.10.1",
   "private": true,
   "type": "module",
   "description": "Tokyo Manga Lab: local-first manga library (PWA) with an Android APK wrapper built by GitHub Actions",

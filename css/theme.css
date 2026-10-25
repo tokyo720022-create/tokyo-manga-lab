@@ -25,6 +25,7 @@
   --shadow: 0 12px 40px #0007;
 }
 :root[data-theme="midnight"] {
+  color-scheme: dark;
   --bg: #070b13;
   --surface: #0e1420;
   --raised: #151d2b;
@@ -36,3 +37,110 @@
   --accent-soft: #6cc8f522;
   --accent-2: #8f9cff;
 }
+
+/* ---- Series themes. Colours only; no artwork, logos or characters. ---- */
+/* sakura-flowers */
+:root[data-theme="sakura-flowers"] {
+  color-scheme: light;
+  --bg: #fff4f7; --surface: #ffffff; --raised: #ffe6ee; --raised-2: #fbd3e1;
+  --line: #efbfd1; --line-soft: #f8dce6;
+  --text: #3b2230; --muted: #775566; --faint: #85606f;
+  --accent: #d6336c; --accent-ink: #ffffff; --accent-soft: #d6336c1f; --accent-2: #7f5cc9;
+  --good: #1b7f53; --warn: #8f5a00; --danger: #c0273f;
+  --shadow: 0 12px 40px #c9708f33;
+  --pattern: radial-gradient(ellipse 16px 10px at 10% 12%, #f7a8c455 0 62%, #0000 64%), radial-gradient(ellipse 12px 8px at 72% 8%, #f4b6cc66 0 62%, #0000 64%), radial-gradient(ellipse 18px 11px at 38% 46%, #f7a8c444 0 62%, #0000 64%), radial-gradient(ellipse 13px 8px at 88% 58%, #f4b6cc66 0 62%, #0000 64%), radial-gradient(ellipse 15px 9px at 22% 86%, #f7a8c455 0 62%, #0000 64%);
+  --pattern-size: 400px 400px;
+}
+/* one-piece */
+:root[data-theme="one-piece"] {
+  color-scheme: dark;
+  --bg: #06121f; --surface: #0c1f33; --raised: #12304d; --raised-2: #1a4062;
+  --line: #1f4a70; --line-soft: #153a58;
+  --text: #fbf3df; --muted: #a9bdd1; --faint: #8fa6bd;
+  --accent: #f5c542; --accent-ink: #2b1c00; --accent-soft: #f5c54226; --accent-2: #e8503f;
+  --good: #6fe0b0; --warn: #ffb14a; --danger: #ff7a7a;
+  --shadow: 0 12px 40px #0008;
+  --pattern: radial-gradient(circle at 50% 100%, #0000 0 17px, #ffffff0c 18px 19px, #0000 20px);
+  --pattern-size: 46px 23px;
+}
+/* naruto */
+:root[data-theme="naruto"] {
+  color-scheme: dark;
+  --bg: #0d0b09; --surface: #181410; --raised: #241d16; --raised-2: #30271d;
+  --line: #3a2e22; --line-soft: #2a2118;
+  --text: #fbefe0; --muted: #bfae9a; --faint: #a39280;
+  --accent: #ff8a1f; --accent-ink: #2a1300; --accent-soft: #ff8a1f26; --accent-2: #3f8cf0;
+  --good: #7ddc8f; --warn: #ffc24d; --danger: #ff6f6f;
+  --shadow: 0 12px 40px #0008;
+  --pattern: repeating-radial-gradient(circle at 100% 0, #ff8a1f12 0 2px, #0000 2px 18px);
+  --pattern-size: auto;
+}
+/* gintama */
+:root[data-theme="gintama"] {
+  color-scheme: dark;
+  --bg: #0b0f1d; --surface: #141a2e; --raised: #1d2540; --raised-2: #28325a;
+  --line: #2f3a64; --line-soft: #222b4b;
+  --text: #f2f5ff; --muted: #aeb8d8; --faint: #94a0c4;
+  --accent: #c9d6ff; --accent-ink: #10162c; --accent-soft: #c9d6ff26; --accent-2: #ff9ec7;
+  --good: #7ee0b8; --warn: #ffd27a; --danger: #ff8aa3;
+  --shadow: 0 12px 40px #0008;
+  --pattern: radial-gradient(circle at 50% 100%, #0000 0 9px, #c9d6ff16 9px 10px, #0000 10px 14px, #c9d6ff12 14px 15px, #0000 15px 19px, #c9d6ff0e 19px 20px, #0000 20px), radial-gradient(circle at 50% 100%, #0000 0 9px, #c9d6ff16 9px 10px, #0000 10px 14px, #c9d6ff12 14px 15px, #0000 15px 19px, #c9d6ff0e 19px 20px, #0000 20px) 28px 14px;
+  --pattern-size: 56px 28px;
+}
+/* dragon-ball */
+:root[data-theme="dragon-ball"] {
+  color-scheme: dark;
+  --bg: #070d1f; --surface: #101a38; --raised: #182650; --raised-2: #223466;
+  --line: #2b3f78; --line-soft: #1b2a58;
+  --text: #fff8e6; --muted: #b4bfe0; --faint: #98a5cf;
+  --accent: #ff9f1a; --accent-ink: #2a1600; --accent-soft: #ff9f1a28; --accent-2: #ffe14d;
+  --good: #6fe6a3; --warn: #ffd84d; --danger: #ff6d6d;
+  --shadow: 0 12px 40px #0009;
+  --pattern: radial-gradient(60% 38% at 50% 0, #ffe14d1f, #0000 72%), repeating-conic-gradient(from 0deg at 50% -8%, #ffe14d0d 0 3deg, #0000 3deg 11deg);
+  --pattern-size: auto;
+}
+/* bleach */
+:root[data-theme="bleach"] {
+  color-scheme: dark;
+  --bg: #08080a; --surface: #131315; --raised: #1d1d20; --raised-2: #28282d;
+  --line: #34343a; --line-soft: #232327;
+  --text: #f6f3ea; --muted: #b1aea4; --faint: #97948b;
+  --accent: #f6f3ea; --accent-ink: #0b0b0d; --accent-soft: #f6f3ea1f; --accent-2: #ff6a1a;
+  --good: #8de3b5; --warn: #ffb454; --danger: #ff7a7a;
+  --shadow: 0 12px 40px #000a;
+  --pattern: linear-gradient(115deg, #0000 58%, #ff6a1a14 58.2%, #0000 61%), repeating-linear-gradient(115deg, #ffffff07 0 2px, #0000 2px 40px);
+  --pattern-size: auto;
+}
+/* rent-a-girlfriend */
+:root[data-theme="rent-a-girlfriend"] {
+  color-scheme: light;
+  --bg: #f1f7ff; --surface: #ffffff; --raised: #e3effd; --raised-2: #d2e5fa;
+  --line: #bfd6f1; --line-soft: #dbe8f8;
+  --text: #1f2b3d; --muted: #4f627a; --faint: #5f728a;
+  --accent: #2a74c7; --accent-ink: #ffffff; --accent-soft: #2a74c71f; --accent-2: #d95a89;
+  --good: #16784f; --warn: #8f5a00; --danger: #c0273f;
+  --shadow: 0 12px 40px #4a7bb533;
+  --pattern: linear-gradient(#d6e9ff, #0000 280px), radial-gradient(#e8719c2e 1.6px, #0000 2.2px);
+  --pattern-size: auto, 26px 26px;
+}
+/* attack-on-titan */
+:root[data-theme="attack-on-titan"] {
+  color-scheme: dark;
+  --bg: #0b0d0b; --surface: #151a15; --raised: #202720; --raised-2: #2b352b;
+  --line: #38453a; --line-soft: #263026;
+  --text: #eef0e6; --muted: #adb7a5; --faint: #929d8b;
+  --accent: #8fc27a; --accent-ink: #0f1c0b; --accent-soft: #8fc27a26; --accent-2: #d3a06a;
+  --good: #8fe0a8; --warn: #f0c060; --danger: #ff7b6e;
+  --shadow: 0 12px 40px #000a;
+  --pattern: linear-gradient(#ffffff08 1px, #0000 1px), linear-gradient(90deg, #ffffff08 1px, #0000 1px);
+  --pattern-size: 64px 32px;
+}
+
+/* Theme backdrop: a faint pattern behind the content (never over it). */
+body::before { content: ""; position: fixed; inset: 0; z-index: 0; pointer-events: none; background: var(--pattern, none); background-size: var(--pattern-size, auto); }
+.app-shell { position: relative; z-index: 1; }
+
+/* Gintama is the special one: silver-to-strawberry-milk accents on top of the wave pattern. */
+:root[data-theme="gintama"] .button-primary, :root[data-theme="gintama"] .identity-avatar, :root[data-theme="gintama"] .login-card-icon { background: linear-gradient(135deg, #e6edff, #ffb3d4); }
+:root[data-theme="gintama"] .mobile-nav a.active { background: linear-gradient(135deg, #c9d6ff2e, #ff9ec72e); }
+:root[data-theme="gintama"] .brand-copy strong { background: linear-gradient(90deg, #f2f5ff, #ffb3d4); -webkit-background-clip: text; background-clip: text; color: transparent; }

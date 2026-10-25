@@ -1,52 +1,51 @@
-# Tokyo Manga Lab — V1.1 Manga Details & Chapter Metadata (preview 0.4)
+# Tokyo Manga Lab
 
-A modular static-web foundation for Tokyo Manga Lab, built around the approved planning blueprint. This package is intended for review and testing before it is pushed or deployed. It does not modify the live repository by itself.
+A mobile-first manga library and reader. It runs as a web app (GitHub Pages / installable PWA) and as an Android app (built by GitHub Actions). Your library, progress and settings live on your own device.
 
-## What's included
+Version: see `BUILD-INFO.md` and `CHANGELOG.md`.
 
-- Responsive Sakura Night / Midnight Blue UI with Home, Discover, Library, Downloads, Profile, and Settings sections.
-- Existing Cloudflare Worker routes `/health` and `/manga` remain backward-compatible. The included Worker source adds normalized `/api/v1` search, source registry, title details and chapter-metadata routes.
-- Modular MangaDex source adapter and normalized content records.
-- IndexedDB database with versioned schema and stores for catalogue items, sources, chapters/assets, library, collections, progress, bookmarks, downloads, settings, cache, statistics, and future sync.
-- Local library: add titles, set status, favourites, custom collections, and remove library entries without deleting cached catalogue metadata.
-- JSON metadata backup export/import. A one-time migration imports the previous `tokyo-manga-lab-v1` localStorage saved/reading lists into IndexedDB and retains the old key as a safety copy.
-- Basic library statistics; reading-session charts remain an honest empty state until in-app chapter reading is implemented.
-- Title-details dialog can display paginated chapter metadata with English, Japanese or all-language filters; chapter links open the original MangaDex page.
-- A service worker that caches the same-origin app shell only. It does not cache or proxy external catalogue responses or cover artwork.
-- Adult-content preference is off by default. No explicit-content source is connected in this build.
+## What it does
 
-## Run locally
+- **Discover and read.** Search MangaDex, open a title, read chapters in vertical-scroll, right-to-left or left-to-right modes with progress remembered per chapter.
+- **Library.** Save titles, set a reading status, favourites and collections. JSON backup and restore (library, collections and settings; never your AniList sign-in).
+- **Chapter list.** Sort, filter (unread, bookmarked, scanlator), display options, mark read, bookmark.
+- **AniList (optional).** Log in, import your manga list, track status, chapters, score and dates, and send progress when you finish a chapter (queued while offline). Your AniList banner, avatar and totals show on Profile. The app works fully without it. See `docs/ANILIST.md`.
+- **Themes.** Ten colour themes: Sakura Night, Midnight Blue, Sakura Flowers, One Piece, Naruto, Gintama, Dragon Ball, Bleach, Rent-a-Girlfriend and Attack on Titan. They use each series' mood and colours only, with no artwork, logos or characters. See `docs/THEMES.md`.
+- **Steady connection.** Short network drops are retried quietly, the status dot recovers by itself, and covers are cached on the device.
+- **Settings** are grouped and searchable.
 
-ES modules and service workers should be tested through HTTP rather than opening `index.html` as a `file://` URL.
+## Run it locally
 
-With Python available:
+ES modules and service workers need HTTP, not `file://`:
 
 ```bash
-python -m http.server 8000
+python3 -m http.server 8000
 ```
 
-Then open `http://localhost:8000` from the project directory. On Android/Termux, run that command in the directory containing `index.html`, then open the local URL in a browser that can access the same device.
+Then open `http://localhost:8000`.
 
-## Deploying to GitHub Pages
+## Checks
 
-1. Back up your current repository files first.
-2. Extract this ZIP into your existing `tokyo-manga-lab` repository root, preserving the `src`, `css`, `assets`, and `worker` folder structure.
-3. Commit/push using your normal workflow only after the local preview is checked. The Worker source is a separate deployment; review `DEPLOY-ON-ANDROID.md` and verify the configured Worker name before running Wrangler.
-4. Wait for the GitHub Pages action/deployment to finish before testing the live site.
+```bash
+npm run check   # parses every file; the offline cache must list every module
+npm test        # unit tests
+python3 tests/e2e/run.py   # browser tests (Python Playwright with Chromium)
+```
 
-The old `mangadex-live.js` prototype is no longer used and is removed by the import that carries `DELETE-FILES.txt`.
+## Deploying
 
-## API notes
-
-- API base: `https://tokyo-manga-lab-api2.haribp720.workers.dev`
-- Existing routes used for live search: `GET /health` and `GET /manga?q=...&page=...`.
-- New Worker source adds `GET /api/v1/sources`, `/api/v1/search`, `/api/v1/manga/{uuid}`, and `/api/v1/manga/{uuid}/chapters`. The deployed Worker stays unchanged until you deploy `worker/src/index.js` yourself.
-- `worker/wrangler.toml` is intentionally not included or overwritten, because the configured Worker name must be checked against your actual deployed Worker URL before deployment.
-- Source adapter capabilities report title details and chapter metadata support in the patch; chapter content and offline chapter downloads remain unimplemented.
+- **Web:** GitHub Pages serves the repository root. See `DEPLOY-ON-ANDROID.md`.
+- **Worker (catalogue API):** `worker/src/index.js`, deployed as `tokyo-manga-lab-api2`. Check the Worker name in `worker/wrangler.toml` before running Wrangler. The Worker only talks to MangaDex, never mirrors chapter pages, and rate-limits each address.
+- **Android app:** `BUILD-APK.md` and `docs/SIGNING.md`.
 
 ## Current limits
 
-- Chapters are read from MangaDex through the in-app reader; nothing is downloaded or stored, and the Worker never mirrors chapter pages. Offline chapter downloads are not available.
-- MangaDex is the only manga source. AniList is for tracking and metadata only. Other sources go through `docs/ADULT-SOURCES.md` and `docs/SOURCE-REVIEW.md` first.
-- There are no Tokyo Manga Lab accounts or cloud sync. Backups are files you save yourself.
-- Novel imports and author submissions are not built.
+- Chapters are read from MangaDex through the in-app reader. Nothing is downloaded, so there is no offline reading yet.
+- MangaDex is the only manga source. AniList is for tracking and metadata only. Other sources must pass `docs/SOURCE-REVIEW.md` first.
+- No Tokyo Manga Lab accounts or cloud sync. Backups are files you save yourself.
+- Adult titles are an off-by-default preference, available only in the Android app. It is not age verification (`docs/ADULT-SOURCES.md`).
+- Planned features are listed under Settings > Coming later. They are not built.
+
+## Credits and notices
+
+Catalogue data and covers come from [MangaDex](https://mangadex.org). Tracking uses [AniList](https://anilist.co). Tokyo Manga Lab is an independent project and is not affiliated with MangaDex, AniList or any series named in the themes. Series names appear only to label colour schemes.

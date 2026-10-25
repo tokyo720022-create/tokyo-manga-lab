@@ -36,7 +36,7 @@ const BOOLEAN_KEYS = new Set(['adultContentEnabled', 'reducedMotion', 'enableOnl
 function allowedValues(key) {
   for (const category of SETTINGS_CATEGORIES) {
     for (const group of category.groups) {
-      const item = group.items.find(entry => entry.key === key && entry.type === 'select');
+      const item = group.items.find(entry => entry.key === key && (entry.type === 'select' || entry.type === 'themes'));
       if (item) return item.options.map(([value]) => value);
     }
   }

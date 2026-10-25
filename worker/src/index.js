@@ -16,6 +16,17 @@ const ADULT_RATINGS = ["erotica", "pornographic"];
 const BLOCKED_TAG_IDS = ["2d1f5d56-a1e5-4d0d-a961-2193588b08ec", "ddefd648-5140-4e5f-ba18-4eca4071d19b"];
 const BLOCKED_TAG_NAMES = new Set(["loli", "shota"]);
 
+// ---- Reviewed exceptions ------------------------------------------------------------------------------------------
+// The tag block above works by tag, so it also hides some titles that are not sexual at all. Titles you have checked by
+// hand can be listed here by MangaDex id (the UUID in the title's mangadex.org address). A listed title is shown only if
+// MangaDex itself rates it "safe": a listed title rated suggestive, erotica or pornographic stays blocked, and so does
+// every title that is not listed. Nothing else in this file unblocks a tag. See docs/EXCEPTIONS.md.
+//   { id: "00000000-0000-4000-8000-000000000000", title: "Name, only a note for you" },
+const REVIEWED_EXCEPTIONS = [
+];
+const EXCEPTION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const exceptionIds = new Set(REVIEWED_EXCEPTIONS.map(entry => String(entry?.id || "").toLowerCase()).filter(id => EXCEPTION_ID.test(id)).slice(0, 100));
+
 // Adult ratings are only ever returned to non-browser clients (the Android app sends no Origin header) that
 // ask for them with adult=1. This keeps the public GitHub Pages demo neutral. It is a product policy,
 // not authentication or age verification: CORS and the Origin header are not security boundaries.
@@ -162,8 +173,35 @@ function normalizePublicationStatus(value) {
   return 'unknown';
 }
 
+function isReviewedException(item) {
+  return exceptionIds.has(String(item?.id || "").toLowerCase()) && item?.attributes?.contentRating === "safe";
+}
+
 function isAllowedContent(item, allowAdult = false) {
-  return allowedRatings(allowAdult).includes(item?.attributes?.contentRating) && !hasBlockedTag(item);
+  if (!allowedRatings(allowAdult).includes(item?.attributes?.contentRating)) return false;
+  return !hasBlockedTag(item) || isReviewedException(item);
+}
+
+// Search cannot return the reviewed titles by itself (the request excludes the blocked tags), so they are fetched by id
+// and added to the first page of results when the search words match. Best effort: a failure here never breaks a search.
+async function reviewedMatches(query, allowAdult = false) {
+  const words = String(query || "").toLowerCase().split(/\s+/).filter(Boolean);
+  if (!exceptionIds.size || !words.length) return [];
+  const params = [["limit", exceptionIds.size], ["contentRating[]", "safe"], ["includes[]", "cover_art"], ["includes[]", "author"], ["includes[]", "artist"]];
+  for (const id of exceptionIds) params.push(["ids[]", id]);
+  try {
+    const payload = await fetchMangaDex("/manga", params);
+    return (payload.data || []).filter(item => isAllowedContent(item, allowAdult) && isReviewedException(item)).filter(item => {
+      const attrs = item.attributes || {};
+      const text = [pickText(attrs.title), ...allTitleTexts(attrs.altTitles)].join(" ").toLowerCase();
+      return words.every(word => text.includes(word));
+    });
+  } catch { return []; }
+}
+
+function withReviewed(extra, items) {
+  const seen = new Set(extra.map(item => item.id));
+  return [...extra, ...items.filter(item => !seen.has(item.id))];
 }
 
 function parsePage(value, max = MAX_SEARCH_PAGE) {
@@ -236,7 +274,8 @@ function mangaSearchParams(query, page, allowAdult = false) {
 
 async function doMangaSearch(query, page, allowAdult = false) {
   const payload = await fetchMangaDex("/manga", mangaSearchParams(query, page, allowAdult));
-  const items = (payload.data || []).filter(item => isAllowedContent(item, allowAdult)).map(normalizeManga);
+  const extra = page === 1 ? await reviewedMatches(query, allowAdult) : [];
+  const items = withReviewed(extra, (payload.data || []).filter(item => isAllowedContent(item, allowAdult))).map(normalizeManga);
   const total = Math.max(0, Number(payload.total) || items.length);
   return {
     items,
@@ -311,7 +350,8 @@ async function handleLegacyManga(url, origin) {
   const page = parsePage(url.searchParams.get("page"), MAX_SEARCH_PAGE);
   try {
     const payload = await fetchMangaDex("/manga", mangaSearchParams(title, page, allowAdult));
-    const data = (payload.data || []).filter(item => isAllowedContent(item, allowAdult)).map(item => {
+    const extra = page === 1 ? await reviewedMatches(title, allowAdult) : [];
+    const data = withReviewed(extra, (payload.data || []).filter(item => isAllowedContent(item, allowAdult))).map(item => {
       const normalized = normalizeManga(item);
       return {
         id: normalized.externalId,

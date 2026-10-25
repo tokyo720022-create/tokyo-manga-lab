@@ -133,7 +133,7 @@
 .chapter-tools { display: flex; align-items: center; gap: 8px; }
 .chapter-tools .icon-button.is-active { background: var(--accent-soft); color: var(--accent); }
 .chapter-options { margin: 0 0 12px; border-radius: var(--radius-l); background: var(--raised); overflow: hidden; }
-.opt-tabs { display: grid; grid-template-columns: repeat(3, 1fr); border-bottom: 1px solid #ffffff14; }
+.opt-tabs { display: grid; grid-template-columns: repeat(3, 1fr); border-bottom: 1px solid var(--line); }
 .opt-tab { min-height: 46px; border: 0; border-bottom: 3px solid transparent; background: none; color: var(--muted); font: inherit; font-weight: 650; }
 .opt-tab[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
 .opt-body { display: grid; padding: 6px 4px 10px; }
@@ -152,12 +152,12 @@
 .chapter-flag { display: inline-grid; width: 16px; color: var(--accent); }
 .chapter-flag svg { width: 16px; height: 16px; }
 .chapter-more { min-width: 44px; min-height: 44px; padding: 0; font-size: 1.2rem; }
-.chapter-menu { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 8px; padding-top: 10px; border-top: 1px solid #ffffff14; }
+.chapter-menu { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 8px; padding-top: 10px; border-top: 1px solid var(--line); }
 .chapter-more-row { display: grid; gap: 8px; margin-top: 12px; }
 .chapter-more-btn { min-height: 44px; }
 
 /* Tracking panel */
-.track-panel { margin: 14px 0; padding: 14px; border-radius: var(--radius-l); background: var(--surface); border: 1px solid #ffffff12; }
+.track-panel { margin: 14px 0; padding: 14px; border-radius: var(--radius-l); background: var(--surface); border: 1px solid var(--line); }
 .track-panel h4 { margin: 0 0 4px; }
 .track-card { display: grid; gap: 12px; }
 .track-head { display: flex; align-items: center; gap: 12px; }
@@ -174,8 +174,8 @@
 .stepper .button { min-height: 44px; padding: 0; }
 .stepper .field { text-align: center; }
 .track-note { margin: 0; padding: 8px 12px; border-radius: var(--radius-m); background: var(--raised); font-size: .8rem; color: var(--muted); }
-.track-note.ok { color: #7be0a4; }
-.track-note.queued, .track-note.warn { color: #f2c06b; }
+.track-note.ok { color: var(--good); }
+.track-note.queued, .track-note.warn { color: var(--warn); }
 .track-note.error { color: var(--danger); }
 .track-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .track-find .link-search { display: flex; gap: 8px; margin: 10px 0; }
@@ -223,13 +223,27 @@ a.row .row-trail { color: var(--faint); }
 
 /* Profile when signed in to AniList: banner, avatar, name, totals */
 .profile-hero { position: relative; border-radius: var(--radius-l); overflow: hidden; background: var(--surface); }
-.profile-banner { position: relative; height: 150px; background: linear-gradient(120deg, #3b1d5a, #7a2f63 55%, #1d3a6b); }
-.profile-banner img { width: 100%; height: 100%; object-fit: cover; }
-.profile-banner::after { content: ""; position: absolute; inset: 0; background: linear-gradient(to bottom, #0a09100f 40%, var(--surface) 100%); }
-.profile-hero-body { position: relative; display: flex; flex-direction: column; align-items: center; gap: 6px; margin-top: -46px; padding: 0 16px 18px; text-align: center; }
-.profile-avatar { width: 88px; height: 88px; border-radius: 50%; object-fit: cover; background: var(--raised); border: 3px solid var(--surface); box-shadow: 0 0 0 2px var(--accent); }
+/* AniList banners are very wide (about 4:1), so show nearly all of it instead of zooming in. */
+.profile-banner { position: relative; aspect-ratio: 3 / 1; min-height: 104px; max-height: 190px; overflow: hidden; background: linear-gradient(120deg, #3b1d5a, #7a2f63 55%, #1d3a6b); }
+.profile-banner img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: center; }
+.profile-banner::after { content: ""; position: absolute; inset: auto 0 0 0; height: 30%; background: linear-gradient(to bottom, transparent, var(--surface)); pointer-events: none; }
+.profile-hero-body { position: relative; display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; column-gap: 14px; margin-top: -36px; padding: 0 16px 16px; text-align: left; }
+.profile-hero-text { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; min-width: 0; padding-top: 42px; }
+.profile-avatar { width: 84px; height: 84px; flex: 0 0 84px; border-radius: 50%; object-fit: cover; background: var(--raised); border: 3px solid var(--surface); box-shadow: 0 0 0 2px var(--accent); }
 .profile-avatar-fallback { display: grid; place-items: center; background: var(--accent); color: var(--accent-ink); font-size: 2rem; font-weight: 900; }
-.profile-hero h1 { margin: 6px 0 0; font-size: 1.5rem; overflow-wrap: anywhere; }
+.profile-hero h1 { margin: 0; font-size: 1.4rem; overflow-wrap: anywhere; }
 .profile-hero .pill-label { min-height: 28px; text-decoration: none; }
 .profile-bio { margin: 0; padding: 14px 16px; font-size: .86rem; line-height: 1.5; white-space: pre-line; overflow-wrap: anywhere; }
 #profileAniStats > .stat-strip { margin-top: 14px; }
+
+/* Theme picker */
+.theme-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+@media (min-width: 560px) { .theme-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+.theme-card { position: relative; display: block; min-width: 0; }
+.theme-card input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: pointer; z-index: 1; }
+.theme-card-body { display: grid; gap: 4px; height: 100%; padding: 8px 8px 10px; border: 2px solid var(--line); border-radius: var(--radius-m); background: var(--raised); transition: border-color .15s, background .15s; }
+.theme-card input:checked + .theme-card-body { border-color: var(--accent); background: var(--accent-soft); }
+.theme-card input:focus-visible + .theme-card-body { outline: 2px solid var(--accent); outline-offset: 2px; }
+.theme-swatch { display: block; height: 46px; border-radius: 9px; background: linear-gradient(115deg, var(--s1) 0 52%, var(--s2) 52% 80%, var(--s3) 80% 100%); box-shadow: inset 0 0 0 1px #8885; }
+.theme-name { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; font-size: .84rem; font-weight: 700; line-height: 1.2; }
+.theme-card small { color: var(--muted); font-size: .7rem; line-height: 1.3; }

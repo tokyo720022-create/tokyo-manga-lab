@@ -33,7 +33,12 @@ def worker(r):
 with sync_playwright() as p:
     b = p.chromium.launch(); c = b.new_context(viewport={'width': 390, 'height': 844}, service_workers='block')
     c.route('**/*.workers.dev/**', worker); c.route('**/graphql.anilist.co/**', anilist)
-    c.route('https://s4.anilist.co/**', lambda r: r.fulfill(status=200, content_type='image/png', body=PNG))
+    def img(r):
+        banner, avatar = os.environ.get('E2E_BANNER'), os.environ.get('E2E_AVATAR')
+        if banner and 'banner' in r.request.url: return r.fulfill(status=200, content_type='image/png', body=open(banner, 'rb').read())
+        if avatar and 'avatar' in r.request.url: return r.fulfill(status=200, content_type='image/png', body=open(avatar, 'rb').read())
+        return r.fulfill(status=200, content_type='image/png', body=PNG)
+    c.route('https://s4.anilist.co/**', img)
     pg = c.new_page(); errs = []; pg.on('pageerror', lambda e: errs.append(str(e)))
     pg.on('dialog', lambda d: d.accept(TOKEN) if d.type == 'prompt' else d.dismiss())
     pg.goto(U + '#profile'); pg.wait_for_selector('.identity')
