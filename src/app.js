@@ -10,7 +10,7 @@ import { getMangaDexLink, findOtherItemsForMangaDex, removeMangaDexLink, saveMan
 import { chapterSourceId, findMangaDexMatch, isLinkableTrackerItem, searchCandidates, searchQueriesFor, trackerIdKey, withFallbackMetadata } from './features/linking/mangadex-link.js';
 import { saveBackupFile } from './features/backup/backup-export.js';
 import { sourceRegistry } from './sources/source-registry.js';
-import { adultActive, configureAdult } from './services/api-client.js';
+import { adultActive, configureAdult, configureChapterFilter } from './services/api-client.js';
 import { isNativeApp as runningInApp } from './features/anilist/anilist-native.js';
 import { loadSettings, saveSetting } from './features/settings/settings-service.js';
 import { migrateLegacyLocalStorage } from './features/settings/legacy-migration.js';
@@ -37,7 +37,7 @@ import { buildAuthorizeUrl, looksLikeToken, parseAuthRedirect } from './features
 import { ANILIST_APPS_URL, ANILIST_REGISTER_URL, loginAvailability, resolveClientId } from './features/anilist/anilist-login.js';
 import { clearAuthAttempt, getAccount, getAuthAttempt, markAuthAttempt } from './features/anilist/anilist-store.js';
 import { closeAuthPage, isNativeApp, listenForAppLinks, openAuthPage } from './features/anilist/anilist-native.js';
-import { connectWithToken, describeAccount, describeSummary, disconnect as disconnectAniList, flushOutbox, notifyLocalChange, refreshProfile, runSync } from './features/anilist/anilist-sync.js';
+import { activeClient as activeAniListClient, connectWithToken, describeAccount, describeSummary, disconnect as disconnectAniList, flushOutbox, notifyLocalChange, refreshProfile, runSync } from './features/anilist/anilist-sync.js';
 import { THEMES, findTheme, nextTheme } from './features/theme/themes.js';
 import { createDownloadManager } from './features/downloads/download-manager.js';
 import { createDownloadController } from './features/downloads/download-controller.js';
@@ -59,6 +59,8 @@ import { buildAuthorizeUrl as buildMalAuthorizeUrl, createAuthAttempt as createM
 import { clearAuthAttempt as clearMalAttempt, getAccount as getMalAccount, getAuthAttempt as getMalAttempt, markAuthAttempt as markMalAttempt } from './features/mal/mal-store.js';
 import { connectWithCode as connectMal, describeAccount as describeMal, describeSummary as describeMalSummary, disconnect as disconnectMal, notifyLocalChange as notifyMalChange, refreshProfile as refreshMalProfile, runSync as runMalSync } from './features/mal/mal-sync.js';
 import * as malTracking from './features/mal/mal-tracking.js';
+import { activeClient as activeMalClient, flushOutbox as flushMalOutbox } from './features/mal/mal-sync.js';
+import { checkConnections } from './features/connections/connection-check.js';
 import { profileIsStale as malProfileIsStale } from './features/mal/mal-profile.js';
 
 const root = document.getElementById('appView');
@@ -484,7 +486,9 @@ function discoverResultsMarkup() {
   const heading = latest ? 'Latest chapters' : state.query ? `Results for “${escapeHtml(state.query)}”` : hasFilters(state.discover.filters) ? 'Matching titles' : 'Browse MangaDex';
   const sub = state.offlineResults ? 'Showing cached titles saved on this device.'
     : latest ? 'Newest English chapters, one entry per title.' : `${Number(state.pagination.total).toLocaleString()} titles found`;
-  return `<div class="section-head"><div><h2>${heading}</h2><p>${sub}</p></div><button class="button button-small" data-action="retry-search">Refresh</button></div>
+  const hiding = state.settings?.hideEmptyTitles !== false;
+  const emptyToggle = latest || state.offlineResults ? '' : ` <button class="mini-link" type="button" data-action="toggle-empty-titles">${hiding ? 'Titles with no chapters are hidden. Show them' : 'Showing titles with no chapters. Hide them'}</button>`;
+  return `<div class="section-head"><div><h2>${heading}</h2><p>${sub}${emptyToggle}</p></div><button class="button button-small" data-action="retry-search">Refresh</button></div>
     ${renderStatusBanner()}${resultsGrid()}${paginationMarkup()}`;
 }
 
@@ -665,7 +669,7 @@ const setMalCardHidden = hidden => { try { if (hidden) localStorage.setItem(MAL_
 // What the MyAnimeList button can do right now. Signing in is always optional.
 function malAvailability() {
   if (!isNativeApp()) return { state: 'needs-app', message: 'MyAnimeList sign-in works in the Android app.' };
-  if (!malClientId()) return { state: 'needs-id', message: 'Add your own MyAnimeList client ID first (Settings, Account and sync). It is free to create.' };
+  if (!malClientId()) return { state: 'needs-id', message: 'No MyAnimeList client ID is set. Add one in Settings, Account and sync, Advanced sign-in options.' };
   return { state: 'ready', message: '' };
 }
 
@@ -762,6 +766,23 @@ async function syncMal({ first = false } = {}) {
 function queueMalPush(contentItemId) {
   if (!state.settings?.malPushEnabled || !state.mal.status.connected) return;
   notifyMalChange(contentItemId).catch(error => { console.warn('MyAnimeList push not queued:', error); });
+}
+
+// Changes made while offline (or while a service was busy) wait on this device. This sends them for every connected
+// service, one run at a time, so a slow connection never starts two at once. A service that says the sign-in is no
+// longer valid is dropped by its own code and shows as "Connect again" in Settings.
+const QUEUE_RETRY_MS = 5 * 60 * 1000;
+let flushingQueued = false;
+async function flushQueuedUpdates({ ignoreWait = false } = {}) {
+  if (flushingQueued) return;
+  flushingQueued = true;
+  try {
+    if (state.anilist.status.connected) await flushOutbox({ ignoreWait }).catch(error => console.warn('AniList outbox not sent:', error.message));
+    if (state.mal.status.connected) await flushMalOutbox({ ignoreWait }).catch(error => console.warn('MyAnimeList outbox not sent:', error.message));
+    await Promise.all([refreshAniList(), refreshMal()]);
+  } catch (error) {
+    console.warn('Queued updates could not be checked:', error?.message || error);
+  } finally { flushingQueued = false; }
 }
 
 // One handler for every tokyomangalab:// link: each sign-in ignores the other's address.
@@ -1140,6 +1161,11 @@ async function applyFilterSheet() {
   await loadSearch(state.query, 1);
 }
 
+// Keeps the "hide titles with no chapters" request filter in step with the settings.
+function applyCatalogueFilter() {
+  configureChapterFilter({ hide: state.settings?.hideEmptyTitles !== false, language: state.settings?.preferredLanguage || 'en' });
+}
+
 async function loadSearch(query = state.query, page = 1) {
   const sequence = ++state.searchSequence;
   if (state.searchController) state.searchController.abort();
@@ -1312,7 +1338,7 @@ function renderDetailsContent(rawItem) {
   let chapterNotice = '';
   if (state.detailsLoadingChapters) chapterNotice = '<div class="empty-state chapter-empty"><span class="spinner"></span><strong>Loading chapter list…</strong><span>Fetching chapter metadata only.</span></div>';
   else if (state.detailsError) chapterNotice = `<div class="notice warning"><strong>${state.detailsChapters.length ? 'Some chapters could not be loaded.' : 'Chapter list unavailable.'}</strong> ${escapeHtml(state.detailsError)} <span>Use the MangaDex source link for the latest chapter list.</span></div>`;
-  else if (!state.detailsChapters.length) chapterNotice = '<div class="empty-state chapter-empty"><strong>No chapters in this result.</strong><span>Try another language or open the source page.</span></div>';
+  else if (!state.detailsChapters.length) chapterNotice = `<div class="empty-state chapter-empty"><strong>No chapters on MangaDex${state.detailsChapterLanguage === 'all' ? '' : ` in ${escapeHtml((CHAPTER_LANGUAGES.find(([code]) => code === state.detailsChapterLanguage) || [0, state.detailsChapterLanguage])[1])}`}.</strong><span>Try another language above, or open the title on MangaDex. Some titles only link to the publisher's own site.</span></div>`;
   else if (!listed.length) chapterNotice = '<div class="empty-state chapter-empty"><strong>No chapters match your filters.</strong><button class="button button-small" type="button" data-action="chapter-filters-clear">Clear filters</button></div>';
   const hasChapters = state.detailsChapters.length > 0;
   const toolbar = hasChapters ? renderChapterToolbar({ view, open: state.chapterOptionsOpen, shown: listed.length, total: state.detailsChapterTotal, loaded: state.detailsChapters.length, canDownload, downloaded: state.detailsChapters.filter(chapter => downloads.isDownloaded(chapter.externalId)).length }) : '';
@@ -1493,7 +1519,8 @@ async function onTrackField(input) {
 
 // ---- AniList -> MangaDex linking -------------------------------------------------------------
 const idleLink = () => ({ status: 'idle', candidates: [], query: '', message: '', changing: false });
-const mangaDexSearch = async query => (await sourceRegistry.search('mangadex', query, 1)).items;
+// Finding the MangaDex page for an AniList / MyAnimeList title must also find titles with no chapters in your language.
+const mangaDexSearch = async query => (await sourceRegistry.search('mangadex', query, 1, { includeEmpty: true })).items;
 const chapterSourceFor = item => chapterSourceId(item, state.detailsLink);
 
 function linkSearchDisabled() {
@@ -1851,6 +1878,7 @@ async function uploadBackupFile(file) {
   await refreshLibraryIndex();
   state.settings = await loadSettings();
   configureAdult(state.settings.adultContentEnabled);
+  applyCatalogueFilter();
   applyTheme();
   await app.navigate(app.currentRoute());
   toast(summary.keptNewer ? `Backup imported. ${summary.keptNewer} newer item${summary.keptNewer === 1 ? '' : 's'} on this device ${summary.keptNewer === 1 ? 'was' : 'were'} kept.` : 'Backup imported. Check your library and settings.');
@@ -1894,6 +1922,11 @@ async function handleSettingChange(input) {
     await app.navigate(app.currentRoute());
     loadSearch(state.query, 1);
     toast(value ? 'Adult titles enabled in this app.' : 'Adult titles hidden.');
+  } else if (key === 'hideEmptyTitles' || key === 'preferredLanguage') {
+    applyCatalogueFilter();
+    state.results = [];
+    toast('Setting saved on this device.');
+    loadSearch(state.query, 1);
   } else toast('Setting saved on this device.');
   if (key === 'autoDownloadEnabled' && app.currentRoute() === 'downloads') await app.navigate('downloads');
   if (key.startsWith('updates') || key.startsWith('autoDownload')) {
@@ -1940,6 +1973,25 @@ async function checkApi() {
     if (result) result.textContent = error.message || 'The API could not be reached.';
     toast('Catalogue API check failed.');
   }
+}
+
+async function checkAllConnections() {
+  const result = document.getElementById('connectionsResult');
+  if (result) { result.style.whiteSpace = 'pre-line'; result.textContent = 'Testing connections…'; }
+  const probes = {
+    mangadex: async () => {
+      const { apiClient } = await import('./services/api-client.js');
+      await apiClient.health();
+      await apiClient.mangaSearch({ query: 'one piece' });
+      return 'search works';
+    }
+  };
+  if (describeAccount(await getAccount()).connected) probes.anilist = async () => { const { client } = await activeAniListClient(); return (await client.viewer()).name; };
+  if (describeMal(await getMalAccount()).connected) probes.mal = async () => { const { client } = await activeMalClient(); return (await client.viewer()).name; };
+  const outcome = await checkConnections(probes);
+  setConnectionStatus(outcome.results.find(row => row.key === 'mangadex')?.ok ? 'online' : 'offline', outcome.results.find(row => row.key === 'mangadex')?.ok ? 'MangaDex online' : 'Catalogue offline');
+  if (result) result.textContent = outcome.summary;
+  toast(outcome.allOk ? 'All connections work.' : 'A connection has a problem. See Settings.');
 }
 
 async function handleAction(action, target) {
@@ -2003,6 +2055,14 @@ async function handleAction(action, target) {
     case 'link-cancel': { state.link = idleLink(); rerenderDetails(currentDetailsItem()); break; }
     case 'link-remove': await unlinkMangaDex(); break;
     case 'retry-search': await loadSearch(state.query, state.page); break;
+    case 'toggle-empty-titles': {
+      const hide = state.settings?.hideEmptyTitles === false;
+      await saveSetting('hideEmptyTitles', hide);
+      state.settings = { ...state.settings, hideEmptyTitles: hide };
+      applyCatalogueFilter();
+      await loadSearch(state.query, 1);
+      break;
+    }
     case 'clear-search': state.discover.filters = emptyFilters(); await loadSearch('', 1); break;
     case 'discover-tab': await switchDiscoverTab(target.dataset.tab); break;
     case 'filter-open': await openFilterSheet(target.dataset.kind); break;
@@ -2029,6 +2089,7 @@ async function handleAction(action, target) {
     case 'recent-clear': if (window.confirm('Clear Recent? Your library, reading progress and stats are kept.')) { await clearHistory(); await app.navigate('recent'); toast('Recent cleared.'); } break;
     case 'planned-feature': toast(`${target.dataset.title || 'This feature'} is planned and not available yet.`); break;
     case 'check-api': await checkApi(); break;
+    case 'check-connections': await checkAllConnections(); break;
     case 'check-updates': await checkUpdatesNow(); break;
     case 'updates-clear': await updates.clearAll(); toast('New chapters cleared.'); break;
     case 'update-open': await updates.markTitleRead(id); openDetails(id); break;
@@ -2144,8 +2205,14 @@ function bindUiEvents() {
   document.getElementById('filterDialog').addEventListener('click', event => { if (event.target.id === 'filterDialog') closeFilterSheet(); });
   downloadDialog.addEventListener('cancel', event => { event.preventDefault(); dlc.closePicker(); });
   // Changes that were waiting for AniList go out as soon as the phone is back online.
-  window.addEventListener('online', () => { downloads.kick(); checkConnection(); if (state.anilist.status.connected) flushOutbox().catch(error => console.warn('AniList outbox not sent:', error.message)); });
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && document.getElementById('connectionStatus')?.dataset.state === 'offline') checkConnection(); });
+  window.addEventListener('online', () => { downloads.kick(); checkConnection(); flushQueuedUpdates({ ignoreWait: true }); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+    if (document.getElementById('connectionStatus')?.dataset.state === 'offline') checkConnection();
+    flushQueuedUpdates();
+  });
+  // While the app is open, anything still waiting is tried again every few minutes.
+  setInterval(() => { if (document.visibilityState === 'visible') flushQueuedUpdates(); }, QUEUE_RETRY_MS);
   // The reader tells us when a chapter was finished.
   document.addEventListener('tml:chapter-read', event => { onChapterRead(event.detail).catch(error => console.warn('Tracking after reading failed:', error)); });
   document.getElementById('backupFileInput').addEventListener('change', async event => {
@@ -2180,6 +2247,7 @@ async function initialize() {
     if (nativeUpdates?.permission) nativeUpdates.permission().then(answer => { state.alertPermission = answer?.state || 'unknown'; }).catch(() => {});
     attachKeepAlive(downloads, window.Capacitor?.Plugins?.TmlDownloads); // only does anything in an APK built with the optional Kotlin plugin
     configureAdult(state.settings.adultContentEnabled);
+  applyCatalogueFilter();
     applyTheme();
     await refreshLibraryIndex();
     await refreshAniList();
@@ -2202,7 +2270,7 @@ async function initialize() {
       console.warn('Catalogue health check failed:', error.message);
     }
     updates.start();
-    if (state.anilist.status.connected) flushOutbox().catch(error => console.warn('AniList outbox not sent:', error.message));
+    flushQueuedUpdates();
     if ('serviceWorker' in navigator && location.protocol !== 'file:') {
       navigator.serviceWorker.register(`./sw.js?v=${encodeURIComponent(APP_VERSION)}`).catch(error => console.warn('Offline app-shell registration skipped:', error));
     }

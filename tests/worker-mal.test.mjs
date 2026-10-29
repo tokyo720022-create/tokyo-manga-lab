@@ -129,3 +129,19 @@ test('only the MyAnimeList routes accept more than GET', async () => {
   assert.equal(preflight.status, 204);
   assert.match(preflight.headers.get('Access-Control-Allow-Headers'), /Authorization/);
 });
+
+test('a MyAnimeList read is repeated once after a gateway error, but a save is not', async t => {
+  const worker = await loadWorker();
+  let reads = 0;
+  mockFetch(t, ({ init }) => {
+    if (init.method === 'PATCH') return reply(503, { error: 'busy' });
+    reads += 1;
+    return reads === 1 ? reply(503, { error: 'busy' }) : reply(200, { name: 'reader', id: 1 });
+  });
+  const me = await call(worker, '/api/v1/mal/me');
+  assert.equal(me.status, 200);
+  assert.equal(reads, 2);
+  const calls = mockFetch(t, () => reply(503, { error: 'busy' }));
+  await call(worker, '/api/v1/mal/manga/13/status', { method: 'PATCH', body: { status: 'reading' } });
+  assert.equal(calls.length, 1, 'writes are queued by the app instead of being repeated here');
+});

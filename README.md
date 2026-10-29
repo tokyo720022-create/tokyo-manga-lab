@@ -43,7 +43,7 @@ python3 tests/e2e/run.py   # browser tests (Python Playwright with Chromium)
 - Chapters are read from MangaDex through the in-app reader, or saved to your phone for offline reading (Downloads, `docs/DOWNLOADS.md`). Downloads are untested on a real phone and live MangaDex; they are gentle by design (one chapter at a time) and are never backed up or shared.
 - New-chapter checks, notifications and auto-download are in-app only unless the optional Android add-on is enabled (`docs/UPDATES.md`); they need the updated Worker and are untested on a real phone and live MangaDex.
 - Genre, Status, Sort by and Latest need the updated Worker deployed. They were tested against mocked responses, not live MangaDex.
-- MangaDex is the only manga source. AniList and MyAnimeList (optional, Android app, your own client ID, `docs/MYANIMELIST.md`) are for tracking and metadata only. MyAnimeList has not been tried against the real service. Other sources must pass `docs/SOURCE-REVIEW.md` first.
+- MangaDex is the only manga source. AniList and MyAnimeList (optional, Android app, `docs/MYANIMELIST.md`) are for tracking and metadata only. MyAnimeList has not been tried against the real service. Other sources must pass `docs/SOURCE-REVIEW.md` first.
 - No Tokyo Manga Lab accounts or cloud sync. Backups are files you save yourself.
 - Adult titles are an off-by-default preference, available only in the Android app. It is not age verification (`docs/ADULT-SOURCES.md`).
 - Planned features are listed under Settings > Coming later. They are not built.
@@ -51,3 +51,5 @@ python3 tests/e2e/run.py   # browser tests (Python Playwright with Chromium)
 ## Credits and notices
 
 Catalogue data and covers come from [MangaDex](https://mangadex.org). Tracking uses [AniList](https://anilist.co). Tokyo Manga Lab is an independent project and is not affiliated with MangaDex, AniList or any series named in the themes. Series names appear only to label colour schemes.
+
+Before trusting an update, go through `docs/PHONE-TEST-CHECKLIST.md` on a real phone. Everything so far was tested with mocked services in a desktop browser.

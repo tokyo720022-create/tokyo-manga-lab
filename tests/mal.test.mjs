@@ -199,3 +199,10 @@ test('the profile is built from the account and the list, with no banner or foll
   assert.equal(profileIsStale(profile, 1000 + 60000), false);
   assert.equal(profileIsStale(profile, 1000 + 60 * 60 * 1000), true);
 });
+
+test('the app ships with a valid built-in client ID and the fixed redirect', async () => {
+  const { DEFAULT_MAL_CLIENT_ID, MAL_REDIRECT_URI } = await import('../src/features/mal/mal-config.js');
+  const { isValidClientId } = await import('../src/features/mal/mal-auth.js');
+  assert.ok(isValidClientId(DEFAULT_MAL_CLIENT_ID), 'built-in client ID has the shape MyAnimeList issues');
+  assert.equal(MAL_REDIRECT_URI, 'tokyomangalab://mal-auth');
+});

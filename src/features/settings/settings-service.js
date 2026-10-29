@@ -8,6 +8,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   reducedMotion: false,
   defaultLibrarySort: 'recently-updated',
   preferredLanguage: 'en',
+  hideEmptyTitles: true,
   enableOnlineSearch: true,
   coverSize: 'comfortable',
   readerMode: 'scroll',
@@ -43,7 +44,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   autoDownloadMax: '3'
 });
 
-const BOOLEAN_KEYS = new Set(['adultContentEnabled', 'reducedMotion', 'enableOnlineSearch', 'anilistPushEnabled', 'malPushEnabled', 'readerShowStatusBar', 'readerShowClock', 'readerVolumeKeys', 'readerChapterNotice', 'readerSkipExtras', 'trackerAutoUpdate', 'chapterFilterUnread', 'chapterFilterBookmarked', 'downloadWifiOnly', 'updatesEnabled', 'updatesPhoneAlerts', 'autoDownloadEnabled']);
+const BOOLEAN_KEYS = new Set(['adultContentEnabled', 'hideEmptyTitles', 'reducedMotion', 'enableOnlineSearch', 'anilistPushEnabled', 'malPushEnabled', 'readerShowStatusBar', 'readerShowClock', 'readerVolumeKeys', 'readerChapterNotice', 'readerSkipExtras', 'trackerAutoUpdate', 'chapterFilterUnread', 'chapterFilterBookmarked', 'downloadWifiOnly', 'updatesEnabled', 'updatesPhoneAlerts', 'autoDownloadEnabled']);
 
 // Allowed values for every select setting come from the schema, so the UI and validation cannot drift apart.
 function allowedValues(key) {

@@ -1,0 +1,87 @@
+name: Check Android add-ons
+
+# A test run, started by hand. It builds the app with BOTH optional Android add-ons switched on (background downloads
+# and new-chapter alerts) and tells you whether they compile. It does not sign anything, publish anything or change
+# your repository, and your normal "Build Android APK" is not affected either way.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  addons:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Set up Java 21 (required by Capacitor 7)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Install dependencies
+        run: |
+          if [ -f package-lock.json ]; then npm ci --no-audit --no-fund; else npm install --no-audit --no-fund; fi
+
+      - name: Build web bundle and Android project
+        run: |
+          npm run build:www
+          npx cap add android
+
+      - name: Switch both add-ons on (this run only)
+        run: |
+          set -eo pipefail
+          touch native/android/ENABLED native/android/UPDATES_ENABLED
+          VERSION_NAME="$(node -p "require('./package.json').version")"
+          bash scripts/android-customize.sh "$VERSION_NAME" "${{ github.run_number }}" 2>&1 | tee customize.log
+          npx cap sync android
+
+      - name: Compile everything (debug)
+        id: compile
+        working-directory: android
+        run: |
+          set +e
+          ./gradlew assembleDebug --no-daemon --stacktrace > ../gradle.log 2>&1
+          echo "code=$?" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Tell me the result
+        run: |
+          {
+            echo "### Android add-ons check"
+            echo ""
+            if [ "${{ steps.compile.outputs.code }}" = "0" ]; then
+              echo "**Passed.** The download plugin and the new-chapter checker compile and the debug app builds with both switched on."
+              echo ""
+              echo "To use them in your real APK, add the empty files \`native/android/ENABLED\` and \`native/android/UPDATES_ENABLED\` to the repository (see docs/ANDROID-NATIVE-DOWNLOADS.md and docs/UPDATES.md)."
+            else
+              echo "**Failed.** Download the \`addons-check-logs\` file below the run and send me \`gradle.log\`. Your normal build is unaffected."
+              echo ""
+              echo "First errors:"
+              echo ""
+              echo '```'
+              grep -E "^e: |error:|FAILURE|What went wrong" -A3 gradle.log | head -40
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ steps.compile.outputs.code }}" != "0" ]; then echo "::error::The add-ons did not compile. See the run summary and the logs file."; exit 1; fi
+
+      - name: Keep the logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: addons-check-logs
+          path: |
+            gradle.log
+            customize.log
+          if-no-files-found: ignore
+          retention-days: 14

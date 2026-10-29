@@ -1,6 +1,7 @@
 // Talks to MyAnimeList through the Tokyo Manga Lab Worker (MyAnimeList's API cannot be called straight from a web view).
 // The Worker passes the person's own token on and keeps nothing. Tokens are refreshed here when they run out.
 import { LIST_PAGE_SIZE, MAX_LIST_PAGES } from './mal-config.js';
+import { withRetry } from '../../shared/retry.js';
 
 export class MalError extends Error {
   constructor(message, { status = 0, code = 'MAL_ERROR', retryAfter = 0 } = {}) {
@@ -44,12 +45,22 @@ async function send(url, { method = 'GET', headers = {}, body, fetchImpl, timeou
 
 // Exchanges the one-time sign-in code (and the PKCE verifier) for tokens.
 export async function exchangeCode({ apiBase, clientId, code, verifier, fetchImpl = (...args) => fetch(...args) }) {
+  // Not retried: a sign-in code works once, and a repeat after a lost answer would be refused.
   const payload = await send(`${apiBase}/api/v1/mal/token`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: { grant_type: 'authorization_code', client_id: clientId, code, code_verifier: verifier }, fetchImpl });
   return readTokens(payload);
 }
 
-export async function refreshTokens({ apiBase, clientId, refreshToken, fetchImpl = (...args) => fetch(...args) }) {
-  const payload = await send(`${apiBase}/api/v1/mal/token`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: { grant_type: 'refresh_token', client_id: clientId, refresh_token: refreshToken }, fetchImpl });
+export async function refreshTokens({ apiBase, clientId, refreshToken, fetchImpl = (...args) => fetch(...args), sleep = ms => new Promise(resolve => setTimeout(resolve, ms)) }) {
+  const ask = () => send(`${apiBase}/api/v1/mal/token`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: { grant_type: 'refresh_token', client_id: clientId, refresh_token: refreshToken }, fetchImpl });
+  // A refresh token is replaced when it is used, so an answer that may have been lost on the way back (a timeout, a 5xx)
+  // is never repeated blindly. Only a connection that never opened is tried once more.
+  let payload;
+  try { payload = await ask(); }
+  catch (error) {
+    if (error?.code !== 'NETWORK_ERROR') throw error;
+    await sleep(900);
+    payload = await ask();
+  }
   return readTokens(payload);
 }
 
@@ -60,14 +71,16 @@ function readTokens(payload, now = Date.now()) {
 }
 
 // auth = { getToken(): Promise<string>, refresh(): Promise<string> }. A 401 triggers one refresh and one retry.
-export function createMalClient({ apiBase, auth, adult = () => false, fetchImpl = (...args) => fetch(...args) } = {}) {
+export function createMalClient({ apiBase, auth, adult = () => false, fetchImpl = (...args) => fetch(...args), retryDelays, sleep } = {}) {
   if (!auth) throw new MalError('Not signed in to MyAnimeList.', { code: 'UNAUTHORIZED' });
 
   async function request(path, { method = 'GET', query = {}, body } = {}) {
     const url = new URL(`${apiBase}/api/v1/mal${path}`);
     for (const [key, value] of Object.entries(query)) if (value !== undefined && value !== null && value !== '') url.searchParams.set(key, String(value));
     if (adult()) url.searchParams.set('adult', '1');
-    const run = async token => send(url.toString(), { method, headers: { Authorization: `Bearer ${token}`, ...(body ? { 'Content-Type': 'application/json' } : {}) }, body, fetchImpl });
+    // Connection drops, 5xx and short rate limits are retried quietly. Saving a list entry is safe to repeat because it
+    // sets the entry to the values sent rather than adding to it.
+    const run = token => withRetry(() => send(url.toString(), { method, headers: { Authorization: `Bearer ${token}`, ...(body ? { 'Content-Type': 'application/json' } : {}) }, body, fetchImpl }), { delays: retryDelays, sleep });
     try { return await run(await auth.getToken()); }
     catch (error) {
       if (error?.code !== 'UNAUTHORIZED') throw error;

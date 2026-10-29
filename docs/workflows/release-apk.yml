@@ -1,0 +1,106 @@
+name: Release Android APK
+
+on:
+  workflow_run:
+    workflows:
+      - Build Android APK
+    types:
+      - completed
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  release:
+    # Only a successful build that was started by pushing a version tag may publish a release. A hand-started or
+    # branch build never does, whatever its branch is called.
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      startsWith(github.event.workflow_run.head_branch, 'v')
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check the tag looks like a version
+        env:
+          VERSION_TAG: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          if ! [[ "$VERSION_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::'$VERSION_TAG' is not a version tag like v1.3.1 or v1.4.0-beta.1, so no release is published."
+            exit 1
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download APK artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Tokyo-Manga-Lab-APK
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          repository: ${{ github.repository }}
+          run-id: ${{ github.event.workflow_run.id }}
+          path: dist
+
+      - name: Verify APK
+        run: |
+          APK_PATH="$(find dist -maxdepth 1 -type f -name '*.apk' -print -quit)"
+          if [ -z "$APK_PATH" ]; then
+            echo "ERROR: APK artifact not found."
+            exit 1
+          fi
+          echo "APK_PATH=$APK_PATH" >> "$GITHUB_ENV"
+          echo "Found APK: $APK_PATH"
+
+      - name: Publish or update release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION_TAG: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          set -euo pipefail
+
+          TITLE="Tokyo Manga Lab ${VERSION_TAG}"
+          NOTES="Tokyo Manga Lab ${VERSION_TAG}
+
+          Android APK for sideloading.
+          This build is debug-signed, not a Google Play production build."
+
+          if gh release view "$VERSION_TAG" >/dev/null 2>&1; then
+            echo "Updating existing release: $VERSION_TAG"
+
+            while IFS= read -r asset; do
+              case "$asset" in
+                Tokyo-Manga-Lab-*.apk)
+                  gh release delete-asset "$VERSION_TAG" "$asset" --yes
+                  ;;
+              esac
+            done < <(gh release view "$VERSION_TAG" --json assets --jq '.assets[].name')
+
+            gh release upload "$VERSION_TAG" "$APK_PATH"
+
+            if [[ "$VERSION_TAG" == *-* ]]; then
+              gh release edit "$VERSION_TAG" \
+                --title "$TITLE" \
+                --notes "$NOTES" \
+                --prerelease
+            else
+              gh release edit "$VERSION_TAG" \
+                --title "$TITLE" \
+                --notes "$NOTES" \
+                --prerelease=false \
+                --latest
+            fi
+          else
+            if [[ "$VERSION_TAG" == *-* ]]; then
+              gh release create "$VERSION_TAG" "$APK_PATH" \
+                --title "$TITLE" \
+                --notes "$NOTES" \
+                --prerelease
+            else
+              gh release create "$VERSION_TAG" "$APK_PATH" \
+                --title "$TITLE" \
+                --notes "$NOTES" \
+                --latest
+            fi
+          fi
