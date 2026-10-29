@@ -40,10 +40,40 @@ jobs:
               src = os.path.join(tmp, items[0])
           for skip in [".github", ".git", "__MACOSX", "node_modules"]:
               shutil.rmtree(os.path.join(src, skip), ignore_errors=True)
+          # Optional clean-up list. DELETE-FILES.txt in the ZIP names files to remove (one repository path per line,
+          # anything after a # is a note, a path ending in / removes that folder). Never touches .git or .github,
+          # never leaves the repository, and the list itself is not copied in.
+          removed = []
+          listing = os.path.join(src, "DELETE-FILES.txt")
+          if os.path.isfile(listing):
+              root = os.path.realpath(".")
+              for raw in open(listing, encoding="utf-8").read().splitlines():
+                  entry = raw.split("#", 1)[0].strip()
+                  if not entry:
+                      continue
+                  folder = entry.endswith("/")
+                  rel = entry.strip("/")
+                  parts = rel.split("/")
+                  target = os.path.realpath(os.path.join(root, rel))
+                  if (not rel or entry.startswith("/") or ".." in parts or parts[0] in (".git", ".github")
+                          or not target.startswith(root + os.sep) or os.path.islink(os.path.join(root, rel))):
+                      print("Skipped unsafe entry:", entry)
+                      continue
+                  if folder and os.path.isdir(target):
+                      shutil.rmtree(target)
+                      removed.append(entry)
+                  elif not folder and os.path.isfile(target):
+                      os.remove(target)
+                      removed.append(entry)
+                  else:
+                      print("Nothing to remove for:", entry)
+              os.remove(listing)
           shutil.copytree(src, ".", dirs_exist_ok=True)
           if os.path.isfile(zp):
               os.remove(zp)
           print("Applied ZIP contents (skipped .github).")
+          if removed:
+              print("Removed:", ", ".join(removed))
           PY
 
       - name: Commit and push branch

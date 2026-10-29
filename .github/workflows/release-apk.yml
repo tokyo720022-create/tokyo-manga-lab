@@ -1,4 +1,3 @@
-
 name: Release Android APK
 
 on:
@@ -14,12 +13,24 @@ permissions:
 
 jobs:
   release:
+    # Only a successful build that was started by pushing a version tag may publish a release. A hand-started or
+    # branch build never does, whatever its branch is called.
     if: >-
       github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
       startsWith(github.event.workflow_run.head_branch, 'v')
     runs-on: ubuntu-latest
 
     steps:
+      - name: Check the tag looks like a version
+        env:
+          VERSION_TAG: ${{ github.event.workflow_run.head_branch }}
+        run: |
+          if ! [[ "$VERSION_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::'$VERSION_TAG' is not a version tag like v1.3.1 or v1.4.0-beta.1, so no release is published."
+            exit 1
+          fi
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
