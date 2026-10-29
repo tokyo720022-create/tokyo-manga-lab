@@ -12,7 +12,7 @@ export const PROFILE_GROUPS = Object.freeze([
   {
     id: 'settings', title: 'More',
     rows: [
-      { id: 'all-settings', title: 'Settings', description: 'Appearance, reading, AniList, backup and more', icon: 'sliders', href: '#settings' }
+      { id: 'all-settings', title: 'Settings', description: 'Appearance, reading, accounts, backup and more', icon: 'sliders', href: '#settings' }
     ]
   }
 ]);

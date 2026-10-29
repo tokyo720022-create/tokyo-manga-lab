@@ -83,6 +83,32 @@ print("Added tokyomangalab://anilist-auth intent filter")
 PY
 grep -q 'android:scheme="tokyomangalab"' "$MANIFEST" || { echo "ERROR: AniList intent filter missing after edit"; exit 1; }
 
+# --- MyAnimeList sign-in: the same for tokyomangalab://mal-auth (a separate check, so older projects get it too) ---
+python3 - "$MANIFEST" <<'PY'
+import sys
+path = sys.argv[1]
+text = open(path, encoding="utf-8").read()
+if 'android:host="mal-auth"' in text:
+    print("MyAnimeList intent filter already present")
+    sys.exit(0)
+anchor = text.find('android:name=".MainActivity"')
+close = text.find("</activity>", anchor) if anchor >= 0 else -1
+if close < 0:
+    sys.exit("ERROR: MainActivity not found in AndroidManifest.xml")
+flt = '''
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="tokyomangalab" android:host="mal-auth" />
+            </intent-filter>
+        '''
+text = text[:close] + flt + text[close:]
+open(path, "w", encoding="utf-8").write(text)
+print("Added tokyomangalab://mal-auth intent filter")
+PY
+grep -q 'android:host="mal-auth"' "$MANIFEST" || { echo "ERROR: MyAnimeList intent filter missing after edit"; exit 1; }
+
 # --- Reader: volume keys turn pages ------------------------------------------------------------
 # The web app puts "vol=1" in the reader address (#read/<id>?vol=1) while the reader option is on. Only then does
 # the app intercept the volume keys and pass them to the page; everywhere else volume works normally.

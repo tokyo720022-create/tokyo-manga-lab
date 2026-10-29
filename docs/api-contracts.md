@@ -29,6 +29,16 @@ Newest English chapters, one entry per title: `{ data: ContentItem[] (each with 
 ### `GET /api/v1/updates?ids={uuid,uuid,…}`
 New in 1.1.0. Up to 50 MangaDex title ids (400 `INVALID_MANGA_ID` if none valid, `TOO_MANY_IDS` if more than 50). Returns `data: [{ externalId, latestChapterId, updatedAt }]` from one MangaDex call (`latestUploadedChapter`); titles hidden by the rating policy are left out, adult titles only in the same case as the other routes. Cached for 60 seconds. The app compares `latestChapterId` with its stored starting point and only then asks `/api/v1/manga/{id}/chapters` for what is new.
 
+### MyAnimeList routes (1.2.0, optional account link)
+Pass the person's own token as `Authorization: Bearer <token>`; the Worker forwards it to MyAnimeList only, stores nothing and caches nothing (`Cache-Control: no-store`). Only these requests exist, and CORS now also allows `POST`, `PATCH` and the `Authorization` header for them. Every other route is still GET only.
+- `POST /api/v1/mal/token` — JSON `{ grant_type: "authorization_code", client_id, code, code_verifier }` or `{ grant_type: "refresh_token", client_id, refresh_token }`. The redirect address is fixed to `tokyomangalab://mal-auth` by the Worker. Returns `data: { access_token, refresh_token, expires_in, token_type }`. A refused sign-in is `MAL_AUTH_FAILED`.
+- `GET /api/v1/mal/me` — the account and its anime totals.
+- `GET /api/v1/mal/list?offset=` — 100 manga entries per page (`hasNext`, `nextOffset`, `hidden`). Adult entries are removed unless the Android app has the adult preference on.
+- `GET /api/v1/mal/search?q=` — up to 10 titles (3 or more letters).
+- `GET /api/v1/mal/manga/{id}` — one title with the person's own entry.
+- `PATCH /api/v1/mal/manga/{id}/status` — JSON with any of `status` (`reading|completed|on_hold|dropped|plan_to_read`), `score` (0-10), `num_chapters_read`, `num_volumes_read`, `is_rereading`, `start_date`, `finish_date`. Anything else is dropped; invalid values are `INVALID_REQUEST`.
+Errors: `UNAUTHORIZED` (401, token missing or expired), `RATE_LIMITED`, `NOT_FOUND`, `TITLE_UNAVAILABLE`, `INVALID_REQUEST`, `UPSTREAM_UNAVAILABLE`.
+
 ### `GET /api/v1/manga/{mangaDexUuid}`
 Returns `{ data: ContentItem, meta }`. Only MangaDex UUIDs and supported content ratings are accepted.
 

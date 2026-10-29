@@ -7,7 +7,7 @@ import {
   getCollectionLibraryItems, importBackup, removeFromLibrary, setLibraryStatus, toggleFavorite
 } from './data/repositories/library-repository.js';
 import { getMangaDexLink, findOtherItemsForMangaDex, removeMangaDexLink, saveMangaDexLink } from './data/repositories/link-repository.js';
-import { chapterSourceId, findMangaDexMatch, isLinkableAniListItem, searchCandidates, searchQueriesFor, withFallbackMetadata } from './features/linking/mangadex-link.js';
+import { chapterSourceId, findMangaDexMatch, isLinkableTrackerItem, searchCandidates, searchQueriesFor, trackerIdKey, withFallbackMetadata } from './features/linking/mangadex-link.js';
 import { saveBackupFile } from './features/backup/backup-export.js';
 import { sourceRegistry } from './sources/source-registry.js';
 import { adultActive, configureAdult } from './services/api-client.js';
@@ -30,14 +30,14 @@ import { chapterNumberValue, chaptersBefore, filterChapters, normalizeChapterVie
 import { renderChapterOptions, renderChapterRow, renderChapterToolbar } from './features/chapters/chapter-ui.js';
 import { listBookmarkedChapterIds, listChapterPages, listReadChapterIds, setBookmark, setChaptersRead } from './data/repositories/chapter-marks-repository.js';
 import { renderTrackingPanel } from './features/tracking/tracking-ui.js';
-import { getTrackingState, linkTitle, pullTracking, saveTracking, searchTitles, trackChapterRead, unlinkTitle } from './features/tracking/tracking-service.js';
+import * as aniTracking from './features/tracking/tracking-service.js';
 import { progressNumber, scoreToRaw, trackStatusLabel } from './features/tracking/tracking.js';
 import { ANILIST_TOKEN_DEFAULT_TTL_SECONDS, AUTH_ATTEMPT_MAX_AGE_MS, DEFAULT_ANILIST_CLIENT_ID } from './features/anilist/anilist-config.js';
 import { buildAuthorizeUrl, looksLikeToken, parseAuthRedirect } from './features/anilist/anilist-auth.js';
 import { ANILIST_APPS_URL, ANILIST_REGISTER_URL, loginAvailability, resolveClientId } from './features/anilist/anilist-login.js';
 import { clearAuthAttempt, getAccount, getAuthAttempt, markAuthAttempt } from './features/anilist/anilist-store.js';
 import { closeAuthPage, isNativeApp, listenForAppLinks, openAuthPage } from './features/anilist/anilist-native.js';
-import { connectWithToken, describeAccount, describeSummary, disconnect as disconnectAniList, flushOutbox, notifyLocalChange, refreshProfile, runSync } from './features/anilist/anilist-sync.js';
+import { activeClient as activeAniListClient, connectWithToken, describeAccount, describeSummary, disconnect as disconnectAniList, flushOutbox, notifyLocalChange, refreshProfile, runSync } from './features/anilist/anilist-sync.js';
 import { THEMES, findTheme, nextTheme } from './features/theme/themes.js';
 import { createDownloadManager } from './features/downloads/download-manager.js';
 import { createDownloadController } from './features/downloads/download-controller.js';
@@ -54,6 +54,14 @@ import { updatesSectionMarkup } from './features/updates/update-view.js';
 import { addUpdates, clearUpdates, getMeta, listUpdates, listWatch, markUpdatesRead, putMeta, putWatch, removeUpdates, removeWatch } from './data/repositories/update-repository.js';
 import { API_BASE_URL } from './services/api-client.js';
 import { profileIsStale } from './features/anilist/anilist-profile.js';
+import { AUTH_ATTEMPT_MAX_AGE_MS as MAL_ATTEMPT_MAX_AGE_MS, DEFAULT_MAL_CLIENT_ID, MAL_APPS_URL, MAL_REGISTER_URL } from './features/mal/mal-config.js';
+import { buildAuthorizeUrl as buildMalAuthorizeUrl, createAuthAttempt as createMalAttempt, isValidClientId as isValidMalClientId, parseAuthRedirect as parseMalRedirect } from './features/mal/mal-auth.js';
+import { clearAuthAttempt as clearMalAttempt, getAccount as getMalAccount, getAuthAttempt as getMalAttempt, markAuthAttempt as markMalAttempt } from './features/mal/mal-store.js';
+import { connectWithCode as connectMal, describeAccount as describeMal, describeSummary as describeMalSummary, disconnect as disconnectMal, notifyLocalChange as notifyMalChange, refreshProfile as refreshMalProfile, runSync as runMalSync } from './features/mal/mal-sync.js';
+import * as malTracking from './features/mal/mal-tracking.js';
+import { activeClient as activeMalClient, flushOutbox as flushMalOutbox } from './features/mal/mal-sync.js';
+import { checkConnections } from './features/connections/connection-check.js';
+import { profileIsStale as malProfileIsStale } from './features/mal/mal-profile.js';
 
 const root = document.getElementById('appView');
 const state = {
@@ -61,6 +69,7 @@ const state = {
   query: '', page: 1, discover: { tab: 'all', filters: emptyFilters(), tags: { state: 'idle', list: [], error: '' }, names: new Map(), sheet: null, draft: null }, searchLoading: true, apiError: '', offlineResults: false,
   library: [], libraryById: new Map(), libraryStatusFilter: 'all', collections: [], selectedCollectionId: '',
   anilist: { account: null, status: { connected: false, expired: false, label: 'Not connected' }, busy: false },
+  mal: { account: null, status: { connected: false, expired: false, label: 'Not connected' }, busy: false },
   readerContext: null, readerHandle: null, readerReturnHash: '#library',
   pinnedItems: new Map(), libraryHiddenCount: 0, detailsItemId: null, detailsHistory: false, sheetItemId: null, detailsSequence: 0, chapterSequence: 0, detailsLoading: false, detailsLoadingChapters: false, detailsMetadataError: '', detailsError: '', detailsChapters: [], detailsChapterPage: 1, detailsChapterLanguage: 'en', detailsChapterPagination: { page: 1, limit: 24, total: 0, hasNext: false }, detailsChapterNext: null, detailsChapterTotal: 0, chapterShown: 60, chapterOptionsOpen: false, chapterOptionsTab: 'filter', chapterMenuId: null, chapterScanlator: '', detailsRead: new Set(), detailsBookmarks: new Set(), detailsPages: new Map(), track: null, detailsLink: null, link: { status: 'idle', candidates: [], query: '', message: '', changing: false }, searchSequence: 0, searchTimer: null, searchController: null, lastSearchTime: null
 };
@@ -494,7 +503,9 @@ async function renderDiscover() {
 
 async function renderLibrary() {
   await refreshLibraryIndex();
-  const syncLinks = new Map((await getAllRecords('syncLinks')).filter(row => row.provider === 'anilist').map(row => [row.contentItemId, row]));
+  const allSyncLinks = await getAllRecords('syncLinks');
+  const syncLinks = new Map(allSyncLinks.filter(row => row.provider === 'anilist').map(row => [row.contentItemId, row]));
+  const malLinks = new Map(allSyncLinks.filter(row => row.provider === 'mal').map(row => [row.contentItemId, row]));
   state.collections = await getCollections();
   let entries = state.library;
   if (state.libraryStatusFilter !== 'all') entries = entries.filter(row => row.personalStatus === state.libraryStatusFilter);
@@ -512,7 +523,7 @@ async function renderLibrary() {
     const item = row.item;
     const id = escapeHtml(item.id);
     const options = ['planned', 'reading', 'completed', 'paused', 'dropped'].map(s => `<option value="${s}" ${row.personalStatus === s ? 'selected' : ''}>${s.charAt(0).toUpperCase()}${s.slice(1)}</option>`).join('');
-    return `<article class="library-card"><button class="poster-link" type="button" data-action="details" data-id="${id}" aria-label="Open details for ${escapeHtml(item.title)}">${coverMarkup(item, true)}</button><div class="library-info"><h3>${escapeHtml(item.title)}</h3><p>${escapeHtml(titleAuthor(item))} · Added ${escapeHtml(formatDate(row.addedAt))}</p>${row.isFavorite ? '<span class="pill-label accent">Favourite</span> ' : ''}${syncLinks.has(item.id) ? `<span class="pill-label">AniList${syncLinks.get(item.id).remoteProgress ? ` · ch. ${Number(syncLinks.get(item.id).remoteProgress)}` : ''}</span>` : ''}</div><div class="library-actions"><label class="sr-only" for="status-${id}">Status for ${escapeHtml(item.title)}</label><select class="select-field" id="status-${id}" data-library-status="${id}">${options}</select><button class="button button-small" data-action="favorite" data-id="${id}">${row.isFavorite ? 'Unfavourite' : 'Favourite'}</button><button class="button button-small" data-action="add-collection" data-id="${id}">Collection</button><button class="button button-small button-danger" data-action="remove" data-id="${id}">Remove</button></div></article>`;
+    return `<article class="library-card"><button class="poster-link" type="button" data-action="details" data-id="${id}" aria-label="Open details for ${escapeHtml(item.title)}">${coverMarkup(item, true)}</button><div class="library-info"><h3>${escapeHtml(item.title)}</h3><p>${escapeHtml(titleAuthor(item))} · Added ${escapeHtml(formatDate(row.addedAt))}</p>${row.isFavorite ? '<span class="pill-label accent">Favourite</span> ' : ''}${syncLinks.has(item.id) ? `<span class="pill-label">AniList${syncLinks.get(item.id).remoteProgress ? ` · ch. ${Number(syncLinks.get(item.id).remoteProgress)}` : ''}</span> ` : ''}${malLinks.has(item.id) ? `<span class="pill-label">MAL${malLinks.get(item.id).remoteProgress ? ` · ch. ${Number(malLinks.get(item.id).remoteProgress)}` : ''}</span>` : ''}</div><div class="library-actions"><label class="sr-only" for="status-${id}">Status for ${escapeHtml(item.title)}</label><select class="select-field" id="status-${id}" data-library-status="${id}">${options}</select><button class="button button-small" data-action="favorite" data-id="${id}">${row.isFavorite ? 'Unfavourite' : 'Favourite'}</button><button class="button button-small" data-action="add-collection" data-id="${id}">Collection</button><button class="button button-small button-danger" data-action="remove" data-id="${id}">Remove</button></div></article>`;
   }).join('')}</div>` : renderEmpty('Your library is empty', 'Search MangaDex and save titles to build your shelf.', '<a class="button-primary" href="#discover">Discover manga</a>');
   const collectionName = state.selectedCollectionId ? escapeHtml(state.collections.find(c => c.id === state.selectedCollectionId)?.name || 'Collection') : 'All titles';
   return `<section>
@@ -545,65 +556,90 @@ function chartMarkup(stats) {
 
 const formatCount = value => (Number(value) || 0).toLocaleString();
 
-// The signed-in person's AniList profile: banner, avatar, name, and AniList's own counts. Shown instead of "Local reader".
-function profileHeroMarkup() {
-  const account = state.anilist.account;
+// Which account supplies the Profile: AniList by default. When both are connected the person can switch in Settings.
+// MyAnimeList's API has no banner, no follower counts and no manga totals; its numbers come from the synced list.
+const PROFILE_PROVIDERS = {
+  anilist: { label: 'AniList', host: 'https://anilist.co/', account: () => state.anilist.account, connected: () => state.anilist.status.connected },
+  mal: { label: 'MyAnimeList', host: 'https://myanimelist.net/', account: () => state.mal.account, connected: () => state.mal.status.connected }
+};
+function profileSource() {
+  const a = state.anilist.status.connected;
+  const m = state.mal.status.connected;
+  if (a && m) return state.settings?.profileSource === 'mal' ? 'mal' : 'anilist';
+  return a ? 'anilist' : m ? 'mal' : null;
+}
+
+function profileHeroMarkup(source = profileSource()) {
+  const provider = PROFILE_PROVIDERS[source] || PROFILE_PROVIDERS.anilist;
+  const account = provider.account();
   const profile = account?.profile;
-  const name = profile?.name || account?.viewer?.name || 'AniList user';
-  const avatar = profile?.avatarUrl || safeCoverUrl(account?.viewer?.avatarUrl);
+  const name = profile?.name || account?.viewer?.name || `${provider.label} user`;
+  const avatar = safeCoverUrl(profile?.avatarUrl) || safeCoverUrl(account?.viewer?.avatarUrl);
   const banner = profile?.bannerUrl;
   const link = profile?.siteUrl || account?.viewer?.siteUrl || '';
-  const safeLink = /^https:\/\/anilist\.co\//.test(link) ? link : '';
+  const safeLink = link.startsWith(provider.host) ? link : '';
   const avatarMarkup = avatar ? `<img class="profile-avatar" src="${escapeHtml(avatar)}" alt="" width="84" height="84" decoding="async" referrerpolicy="no-referrer">` : `<span class="profile-avatar profile-avatar-fallback" aria-hidden="true">${escapeHtml(name.slice(0, 1).toUpperCase())}</span>`;
-  return `<div class="profile-hero" id="profileHero">
+  return `<div class="profile-hero" id="profileHero" data-provider="${source}">
     <div class="profile-banner">${banner ? `<img src="${escapeHtml(banner)}" alt="" decoding="async" referrerpolicy="no-referrer">` : ''}</div>
-    <div class="profile-hero-body">${avatarMarkup}<div class="profile-hero-text"><h1>${escapeHtml(name)}</h1>${safeLink ? `<a class="pill-label accent" href="${escapeHtml(safeLink)}" target="_blank" rel="noopener noreferrer">View on AniList ${icon('external', 'icon-sm')}</a>` : '<span class="pill-label accent">AniList</span>'}</div></div>
+    <div class="profile-hero-body">${avatarMarkup}<div class="profile-hero-text"><h1>${escapeHtml(name)}</h1>${safeLink ? `<a class="pill-label accent" href="${escapeHtml(safeLink)}" target="_blank" rel="noopener noreferrer">View on ${provider.label} ${icon('external', 'icon-sm')}</a>` : `<span class="pill-label accent">${provider.label}</span>`}</div></div>
   </div>`;
 }
 
-function profileAniListMarkup() {
-  const profile = state.anilist.account?.profile;
+function profileAniListMarkup(source = profileSource()) {
+  const provider = PROFILE_PROVIDERS[source] || PROFILE_PROVIDERS.anilist;
+  const profile = provider.account()?.profile;
   if (!profile) return '<div id="profileAniStats"></div>';
   const cells = [[profile.anime.count, 'Anime'], [profile.manga.count, 'Manga']];
   if (profile.following !== null) cells.push([profile.following, 'Following']);
   if (profile.followers !== null) cells.push([profile.followers, 'Followers']);
   if (cells.length < 4) cells.push([profile.manga.chaptersRead, 'Chapters read']);
-  const rows = [['Chapters read', formatCount(profile.manga.chaptersRead)], ['Volumes read', formatCount(profile.manga.volumesRead)], ['Manga mean score', profile.manga.meanScore ? String(profile.manga.meanScore) : '—']];
+  if (cells.length < 4) cells.push([profile.manga.volumesRead, 'Volumes read']);
+  const score = profile.manga.meanScore ? (source === 'mal' ? `${profile.manga.meanScore} / 10` : String(profile.manga.meanScore)) : '—';
+  const rows = [['Chapters read', formatCount(profile.manga.chaptersRead)], ['Volumes read', formatCount(profile.manga.volumesRead)], ['Manga mean score', score]];
+  if (source === 'mal') {
+    if (profile.joinedAt) rows.push(['Member since', profile.joinedAt]);
+    if (profile.location) rows.push(['Location', profile.location]);
+  }
+  const note = source === 'mal' ? '<p class="footer-note">MyAnimeList does not share a banner or follower counts. Manga numbers come from your synced list.</p>' : '';
   return `<div id="profileAniStats">
-    <div class="stat-strip" role="list" aria-label="AniList totals">${cells.slice(0, 4).map(([value, label]) => `<div role="listitem"><strong>${formatCount(value)}</strong><span>${label}</span></div>`).join('')}</div>
-    <h2 class="group-title">Manga on AniList</h2>
+    <div class="stat-strip" role="list" aria-label="${provider.label} totals">${cells.slice(0, 4).map(([value, label]) => `<div role="listitem"><strong>${formatCount(value)}</strong><span>${label}</span></div>`).join('')}</div>
+    <h2 class="group-title">Manga on ${provider.label}</h2>
     <div class="group">${rows.map(([label, value]) => `<div class="row is-info"><span class="row-copy"><strong>${label}</strong></span><span class="row-trail"><span class="row-value">${escapeHtml(value)}</span></span></div>`).join('')}</div>
-    ${profile.about ? `<h2 class="group-title">Bio</h2><div class="group"><p class="profile-bio">${escapeHtml(profile.about)}</p></div>` : ''}
+    ${profile.about ? `<h2 class="group-title">Bio</h2><div class="group"><p class="profile-bio">${escapeHtml(profile.about)}</p></div>` : ''}${note}
   </div>`;
 }
 
 // Fetch a fresh profile in the background; the screen shows the saved one right away and updates in place.
 async function refreshProfileInBackground() {
-  if (!state.anilist.status.connected || !profileIsStale(state.anilist.account?.profile)) return;
+  const source = profileSource();
+  if (!source) return;
+  const stale = source === 'mal' ? malProfileIsStale(state.mal.account?.profile) : profileIsStale(state.anilist.account?.profile);
+  if (!stale) return;
   try {
-    const profile = await refreshProfile();
+    const profile = source === 'mal' ? await refreshMalProfile() : await refreshProfile();
     if (!profile) return;
-    state.anilist.account = await getAccount();
-    if (app.currentRoute() !== 'profile') return;
+    if (source === 'mal') state.mal.account = await getMalAccount(); else state.anilist.account = await getAccount();
+    if (app.currentRoute() !== 'profile' || profileSource() !== source) return;
     const hero = document.getElementById('profileHero');
     const stats = document.getElementById('profileAniStats');
-    if (hero) hero.outerHTML = profileHeroMarkup();
-    if (stats) stats.outerHTML = profileAniListMarkup();
-  } catch (error) { console.warn('AniList profile not refreshed:', error?.message || error); }
+    if (hero) hero.outerHTML = profileHeroMarkup(source);
+    if (stats) stats.outerHTML = profileAniListMarkup(source);
+  } catch (error) { console.warn(`${source} profile not refreshed:`, error?.message || error); }
 }
 
 async function renderProfile() {
   const stats = await getDashboardStatistics();
   await refreshAniList();
+  await refreshMal();
   const chevron = icon('chevronRight');
   const groups = PROFILE_GROUPS.map(group => `<div class="group">${group.rows.map(row => listRow({ icon: row.icon, title: row.title, description: row.description, href: row.href, trail: chevron })).join('')}</div>`).join('');
-  const connected = state.anilist.status.connected;
+  const connected = Boolean(profileSource());
   const activity = stats.hasReadingSessions
     ? `<h2 class="group-title">Last seven days</h2><div class="group"><div class="surface-pad">${chartMarkup(stats)}<p class="chart-note">${stats.completedChapters} chapters completed · ${Math.round(stats.activeSessionSeconds / 60)} minutes of reading</p></div></div>`
     : '';
   const head = connected
-    ? `${profileHeroMarkup()}${profileAniListMarkup()}${renderAniListCard()}<h2 class="group-title">In this app</h2>${renderStats(stats)}`
-    : `<div class="identity"><div class="identity-avatar" aria-hidden="true">東</div><div><h1>Local reader</h1><p>Your library lives on this device.</p><span class="pill-label">No account needed</span></div></div>${renderStats(stats)}${renderAniListCard()}`;
+    ? `${profileHeroMarkup()}${profileAniListMarkup()}${renderAniListCard()}${renderMalCard()}<h2 class="group-title">In this app</h2>${renderStats(stats)}`
+    : `<div class="identity"><div class="identity-avatar" aria-hidden="true">東</div><div><h1>Local reader</h1><p>Your library lives on this device.</p><span class="pill-label">No account needed</span></div></div>${renderStats(stats)}${renderAniListCard()}${renderMalCard()}`;
   setTimeout(() => { refreshProfileInBackground(); }, 0);
   return `<section class="narrow profile-page">
     ${head}
@@ -613,6 +649,143 @@ async function renderProfile() {
   </section>`;
 }
 
+
+// ---------- MyAnimeList (optional, same ideas as AniList) ----------
+async function refreshMal() {
+  state.mal.account = await getMalAccount();
+  state.mal.status = describeMal(state.mal.account);
+}
+const malClientId = () => {
+  const own = String(state.settings?.malClientId || '').trim();
+  if (isValidMalClientId(own)) return own;
+  return isValidMalClientId(DEFAULT_MAL_CLIENT_ID) ? DEFAULT_MAL_CLIENT_ID : '';
+};
+const MAL_CARD_HIDDEN_KEY = 'tml-mal-card-hidden';
+const malCardHidden = () => { try { return localStorage.getItem(MAL_CARD_HIDDEN_KEY) === '1'; } catch { return false; } };
+const setMalCardHidden = hidden => { try { if (hidden) localStorage.setItem(MAL_CARD_HIDDEN_KEY, '1'); else localStorage.removeItem(MAL_CARD_HIDDEN_KEY); } catch { /* the choice just is not remembered */ } };
+
+// What the MyAnimeList button can do right now. Signing in is always optional.
+function malAvailability() {
+  if (!isNativeApp()) return { state: 'needs-app', message: 'MyAnimeList sign-in works in the Android app.' };
+  if (!malClientId()) return { state: 'needs-id', message: 'No MyAnimeList client ID is set. Add one in Settings, Account and sync, Advanced sign-in options.' };
+  return { state: 'ready', message: '' };
+}
+
+function renderMalCard() {
+  if (state.mal.status.connected) {
+    const last = dynamicValue('malLastSync');
+    return `<section class="login-card is-connected" aria-labelledby="malCardTitle"><div class="login-card-head"><span class="login-card-icon" aria-hidden="true">${icon('cloud')}</span><div><h2 id="malCardTitle">MyAnimeList sync</h2><p>${escapeHtml(last === 'Not synced yet' ? 'Not synced yet.' : `Last synced ${last}.`)}</p></div></div><div class="login-card-actions"><button class="button-primary" type="button" data-action="mal-sync">Sync now</button><a class="button" href="#settings/account">MyAnimeList settings</a></div></section>`;
+  }
+  if (malCardHidden()) return `<p class="login-card-collapsed"><button class="link-button" type="button" data-action="mal-card-show">Connect MyAnimeList (optional)</button></p>`;
+  const availability = malAvailability();
+  const signIn = availability.state === 'ready'
+    ? '<button class="button-primary" type="button" data-action="mal-connect">Log in with MyAnimeList</button>'
+    : availability.state === 'needs-id' ? '<a class="button-primary" href="#settings/account">Add client ID</a>' : '';
+  return `<section class="login-card" aria-labelledby="malCardTitle">
+    <div class="login-card-head"><span class="login-card-icon" aria-hidden="true">${icon('cloud')}</span><div><h2 id="malCardTitle">Connect MyAnimeList <span class="pill-label">Optional</span></h2><p>Bring in your MyAnimeList manga list and keep progress there. The app works fully without it.</p></div></div>
+    <p class="login-safety">You will go to <strong>myanimelist.net</strong>. Check the address before typing your password.</p>
+    ${availability.message ? `<p class="muted">${escapeHtml(availability.message)}</p>` : ''}
+    <div class="login-card-actions">${signIn}<button class="button" type="button" data-action="mal-register">Register</button><button class="button-subtle" type="button" data-action="mal-card-hide">Not now</button></div>
+  </section>`;
+}
+
+async function startMalSignIn() {
+  const availability = malAvailability();
+  if (availability.state !== 'ready') { toast(availability.message); if (availability.state === 'needs-id') window.location.hash = '#settings/account'; return; }
+  const attempt = createMalAttempt();
+  const clientId = malClientId();
+  await markMalAttempt({ ...attempt, clientId });
+  await openAuthPage(buildMalAuthorizeUrl(clientId, attempt));
+}
+
+async function finishMalConnect(account) {
+  await refreshMal();
+  toast(`Connected to MyAnimeList as ${account.viewer?.name || 'your account'}.`);
+  if (!state.settings.malPushEnabled && window.confirm('Also save the status changes you make here on MyAnimeList? Sync never deletes anything. You can change this in Settings.')) {
+    await saveSetting('malPushEnabled', true);
+    state.settings = { ...state.settings, malPushEnabled: true };
+  }
+  if (window.location.hash === '#settings/account') await app.navigate('settings');
+  else window.location.hash = '#settings/account';
+  if (!state.mal.account?.lastSync) {
+    toast('Reading your MyAnimeList list for the first time…');
+    await syncMal({ first: true });
+  }
+}
+
+// Android hands tokyomangalab://mal-auth?code=...&state=... back to the app. Accept it only right after we started sign-in,
+// and only with the state we made, so a link from anywhere else can never connect an account.
+async function handleMalRedirect(urlString) {
+  const parsed = parseMalRedirect(urlString);
+  if (!parsed.ok && parsed.reason === 'not-ours') return;
+  await closeAuthPage();
+  const attempt = await getMalAttempt();
+  await clearMalAttempt();
+  if (!attempt || Date.now() - attempt.startedAt > MAL_ATTEMPT_MAX_AGE_MS) { toast('That sign-in link was not expected. Start sign-in from Settings.'); return; }
+  if (!parsed.ok) { toast(parsed.reason === 'denied' ? 'MyAnimeList sign-in was cancelled.' : 'MyAnimeList did not send a sign-in code. Try again.'); return; }
+  if (parsed.state !== attempt.state) { toast('That MyAnimeList sign-in did not match. Try again.'); return; }
+  try { await finishMalConnect(await connectMal({ code: parsed.code, verifier: attempt.verifier, clientId: attempt.clientId })); }
+  catch (error) { console.error(error); toast(error?.message || 'Could not finish MyAnimeList sign-in.'); }
+}
+
+async function signOutMal() {
+  if (!window.confirm('Sign out of MyAnimeList on this device? Your library stays as it is.')) return;
+  await disconnectMal();
+  await refreshMal();
+  await app.navigate('settings');
+  toast('Signed out of MyAnimeList.');
+}
+
+async function syncMal({ first = false } = {}) {
+  if (state.mal.busy) return;
+  state.mal.busy = true;
+  const say = text => { const out = document.getElementById('malResult'); if (out) out.textContent = text; };
+  try {
+    say('Starting sync');
+    const summary = await runMalSync({
+      pushEnabled: first ? false : Boolean(state.settings.malPushEnabled),
+      allowAdult: Boolean(state.settings.adultContentEnabled),
+      confirmPush: count => window.confirm(`Add or update ${count} title${count === 1 ? '' : 's'} on your MyAnimeList account from this app? Nothing is deleted.`),
+      onProgress: say
+    });
+    await refreshMal();
+    await refreshLibraryIndex();
+    await app.navigate('settings');
+    say(describeMalSummary(summary));
+    toast('MyAnimeList sync finished.');
+  } catch (error) {
+    console.error(error);
+    await refreshMal();
+    await app.navigate('settings');
+    say(error?.message || 'MyAnimeList sync failed.');
+  } finally { state.mal.busy = false; }
+}
+
+function queueMalPush(contentItemId) {
+  if (!state.settings?.malPushEnabled || !state.mal.status.connected) return;
+  notifyMalChange(contentItemId).catch(error => { console.warn('MyAnimeList push not queued:', error); });
+}
+
+// Changes made while offline (or while a service was busy) wait on this device. This sends them for every connected
+// service, one run at a time, so a slow connection never starts two at once. A service that says the sign-in is no
+// longer valid is dropped by its own code and shows as "Connect again" in Settings.
+const QUEUE_RETRY_MS = 5 * 60 * 1000;
+let flushingQueued = false;
+async function flushQueuedUpdates({ ignoreWait = false } = {}) {
+  if (flushingQueued) return;
+  flushingQueued = true;
+  try {
+    if (state.anilist.status.connected) await flushOutbox({ ignoreWait }).catch(error => console.warn('AniList outbox not sent:', error.message));
+    if (state.mal.status.connected) await flushMalOutbox({ ignoreWait }).catch(error => console.warn('MyAnimeList outbox not sent:', error.message));
+    await Promise.all([refreshAniList(), refreshMal()]);
+  } finally { flushingQueued = false; }
+}
+
+// One handler for every tokyomangalab:// link: each sign-in ignores the other's address.
+function handleAppLink(urlString) {
+  handleAniListRedirect(urlString);
+  handleMalRedirect(urlString);
+}
 
 // ---------- AniList ----------
 async function refreshAniList() {
@@ -741,10 +914,15 @@ function queueAniListPush(contentItemId) {
 
 function dynamicValue(name) {
   if (name === 'anilistStatus') return state.anilist.status.label;
+  if (name === 'malStatus') return state.mal.status.label;
   if (name === 'downloadUsage') { const { usage } = downloads.snapshot(); return `${formatBytes(usage.bytes)} · ${usage.chapters} chapter${usage.chapters === 1 ? '' : 's'}`; }
   if (name === 'updateStatus') return state.updateStatusText || 'Not checked yet';
   if (name === 'alertsStatus') return ({ granted: 'Allowed', denied: 'Blocked in Android settings', prompt: 'Not asked yet' })[state.alertPermission] || 'Unknown';
   if (name === 'ratings') return adultActive() ? 'Includes adult (Android app only)' : 'Safe and suggestive';
+  if (name === 'malLastSync') {
+    const last = state.mal.account?.lastSync;
+    return last ? `${new Date(last.at).toLocaleString()}` : 'Not synced yet';
+  }
   if (name === 'anilistLastSync') {
     const last = state.anilist.account?.lastSync;
     return last ? `${new Date(last.at).toLocaleString()}` : 'Not synced yet';
@@ -755,6 +933,9 @@ function dynamicValue(name) {
 function itemVisible(item) {
   if (item.when === 'anilistConnected') return state.anilist.status.connected;
   if (item.when === 'anilistDisconnected') return !state.anilist.status.connected;
+  if (item.when === 'malConnected') return state.mal.status.connected;
+  if (item.when === 'malDisconnected') return !state.mal.status.connected;
+  if (item.when === 'bothConnected') return state.anilist.status.connected && state.mal.status.connected;
   if (item.when === 'nativeAlerts') return Boolean(nativeUpdates);
   if (item.when === 'noNativeAlerts') return !nativeUpdates;
   return true;
@@ -800,7 +981,7 @@ function categoryValue(category) {
     case 'theme': return optionLabel('theme');
     case 'readerMode': return optionLabel('readerMode');
     case 'language': return optionLabel('preferredLanguage');
-    case 'anilistStatus': return state.anilist.status.connected ? 'Connected' : 'Not connected';
+    case 'anilistStatus': { const n = [state.anilist.status.connected, state.mal.status.connected].filter(Boolean).length; return n ? `${n} connected` : 'Not connected'; }
     default: return '';
   }
 }
@@ -883,6 +1064,7 @@ function renderSettingsCategory(category) {
 async function renderSettings() {
   if (!state.settings) state.settings = await loadSettings();
   await refreshAniList();
+  await refreshMal();
   await refreshUpdateStatus();
   const category = findCategory(getRouteParam());
   return category ? renderSettingsCategory(category) : renderSettingsHome();
@@ -1062,6 +1244,13 @@ function safeMangaDexTitleUrl(value) {
   } catch { return ''; }
 }
 
+function safeMalUrl(value) {
+  try {
+    const url = new URL(value);
+    return url.origin === 'https://myanimelist.net' && /^\/manga\/\d+/.test(url.pathname) ? url.href : '';
+  } catch { return ''; }
+}
+
 function safeAniListUrl(value) {
   try {
     const url = new URL(value);
@@ -1105,17 +1294,28 @@ async function saveChapterViewSetting(key, value) {
   state.settings = { ...state.settings, [key]: value };
 }
 
-const idleTrack = () => ({ open: false, loading: false, connected: false, mediaId: null, row: null, pending: false, note: '', noteKind: '', search: { query: '', status: 'idle', results: [], message: '' } });
+// Trackers share one set of functions, so the Tracking panel works the same for AniList and MyAnimeList.
+const TRACKERS = {
+  anilist: { key: 'anilist', label: 'AniList', mark: 'AL', service: aniTracking, connected: () => state.anilist.status.connected, url: id => `https://anilist.co/manga/${encodeURIComponent(id)}`, expired: 'AniList sign-in expired. Connect again in Settings.' },
+  mal: { key: 'mal', label: 'MyAnimeList', mark: 'MAL', service: malTracking, connected: () => state.mal.status.connected, url: id => `https://myanimelist.net/manga/${encodeURIComponent(id)}`, expired: 'MyAnimeList sign-in expired. Connect again in Settings.' }
+};
+const connectedTrackers = () => Object.values(TRACKERS).filter(tracker => tracker.connected());
+const activeTracker = () => {
+  const connected = connectedTrackers();
+  return connected.find(tracker => tracker.key === state.track?.provider) || connected[0] || TRACKERS.anilist;
+};
+
+const idleTrack = () => ({ provider: null, open: false, loading: false, connected: false, mediaId: null, row: null, pending: false, note: '', noteKind: '', search: { query: '', status: 'idle', results: [], message: '' } });
 
 function renderDetailsContent(rawItem) {
   if (!rawItem) return;
   const item = withFallbackMetadata(rawItem, state.detailsLink);
-  const linkable = isLinkableAniListItem(rawItem);
+  const linkable = isLinkableTrackerItem(rawItem);
   const entry = getLibraryEntry(item.id);
-  const safeSourceUrl = item.sourceId === 'mangadex' ? safeMangaDexTitleUrl(item.sourceUrl) : item.sourceId === 'anilist' ? safeAniListUrl(item.sourceUrl) : '';
-  const sourceName = item.sourceId === 'anilist' ? 'AniList' : 'MangaDex';
+  const safeSourceUrl = item.sourceId === 'mangadex' ? safeMangaDexTitleUrl(item.sourceUrl) : item.sourceId === 'anilist' ? safeAniListUrl(item.sourceUrl) : item.sourceId === 'mal' ? safeMalUrl(item.sourceUrl) : '';
+  const sourceName = item.sourceId === 'anilist' ? 'AniList' : item.sourceId === 'mal' ? 'MyAnimeList' : 'MangaDex';
   const sourceLink = safeSourceUrl ? `<a class="button-primary" href="${escapeHtml(safeSourceUrl)}" target="_blank" rel="noopener noreferrer">Open ${sourceName} ↗</a>` : '';
-  const fallbackNote = item.usedFallback?.length ? `<p class="muted">Filled in from MangaDex because AniList has none: ${escapeHtml(item.usedFallback.join(', '))}.</p>` : '';
+  const fallbackNote = item.usedFallback?.length ? `<p class="muted">Filled in from MangaDex because ${sourceName} has none: ${escapeHtml(item.usedFallback.join(', '))}.</p>` : '';
   const metadataNotice = state.detailsMetadataError ? `<div class="notice warning"><strong>Using cached metadata.</strong> ${escapeHtml(state.detailsMetadataError)}</div>` : '';
   const canRead = Boolean(sourceRegistry.get('mangadex')?.capabilities?.chapterContent);
   const canDownload = Boolean(sourceRegistry.get('mangadex')?.capabilities?.offlineDownloads) && state.detailsChapters.some(chapter => Number(chapter.pages) > 0);
@@ -1140,8 +1340,9 @@ function renderDetailsContent(rawItem) {
   ].join('');
   const trackLabel = state.track?.row?.onList ? `Tracking · ${trackStatusLabel(state.track.row.status)}${state.track.row.progress ? ` · ch. ${state.track.row.progress}` : ''}` : 'Tracking';
   const trackButton = `<button class="button-subtle" type="button" data-action="track-toggle" aria-expanded="${Boolean(state.track?.open)}">${escapeHtml(trackLabel)}</button>`;
-  const trackingPanel = state.track?.open ? renderTrackingPanel({ track: state.track, item, coverHtml: media => coverMarkup(media, true) }) : '';
-  document.getElementById('detailsContent').innerHTML = `<div class="details-layout"><div class="details-cover">${coverMarkup(item, false, state.detailsLink?.fallback?.coverUrl)}</div><div><span class="eyebrow">${escapeHtml(item.sourceId === 'mangadex' ? 'MangaDex title' : item.sourceId === 'anilist' ? (state.detailsLink ? 'AniList title · chapters from MangaDex' : 'AniList title') : 'Local library item')}</span><h2 id="detailsTitle">${escapeHtml(item.title)}</h2><p>${escapeHtml(titleAuthor(item))}${item.releaseYear ? ` · ${escapeHtml(item.releaseYear)}` : ''}</p><div class="tag-row">${(item.tags || []).slice(0, 8).map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join('')}</div><p>${escapeHtml(item.description || 'No synopsis is available in the catalogue response.')}</p><p class="muted">Catalogue status: ${escapeHtml(item.publicationStatus || 'unknown')} · Rating: ${escapeHtml(item.contentRating || 'unknown')}</p>${fallbackNote}${metadataNotice}</div></div><div class="details-actions">${entry ? `<button class="button-subtle" data-action="mark-reading" data-id="${escapeHtml(item.id)}">${entry.personalStatus === 'reading' ? 'Currently reading' : 'Mark as reading'}</button>` : `<button class="button-subtle" data-action="save" data-id="${escapeHtml(item.id)}">Add to library</button>`}${sourceLink}${trackButton}</div>${trackingPanel}${linkable && (!state.detailsLink || state.link.changing) ? renderLinkPanel(rawItem) : ''}<section class="chapter-panel" ${linkable && (!state.detailsLink || state.link.changing) ? 'hidden' : ''}>${linkable && state.detailsLink ? renderLinkBanner(state.detailsLink) : ''}<div class="section-topline chapter-heading"><div><h3>Chapters</h3><p>Tap Read to open a chapter here. The ↗ button opens it on MangaDex.</p></div><label class="chapter-language-label">Language <select class="select-field" data-action="chapter-language" aria-label="Chapter language">${chapterLanguageOptions()}</select></label></div>${toolbar}${options}${state.detailsLoading ? '<p class="muted">Refreshing title metadata…</p>' : ''}${chapterNotice}${chapterRows ? `<div class="chapter-list">${chapterRows}</div>` : ''}${more ? `<div class="chapter-more-row">${more}</div>` : ''}</section><p class="footer-note">Chapter pages load directly from MangaDex. Chapters you download are saved only on this phone for your own reading. Tokyo Manga Lab never hosts, shares or uploads them.</p>`;
+  const tracker = activeTracker();
+  const trackingPanel = state.track?.open ? renderTrackingPanel({ track: state.track, item, coverHtml: media => coverMarkup(media, true), provider: { key: tracker.key, label: tracker.label, mark: tracker.mark, url: tracker.url(state.track?.mediaId || ''), choices: connectedTrackers().map(entry => ({ key: entry.key, label: entry.label })) } }) : '';
+  document.getElementById('detailsContent').innerHTML = `<div class="details-layout"><div class="details-cover">${coverMarkup(item, false, state.detailsLink?.fallback?.coverUrl)}</div><div><span class="eyebrow">${escapeHtml(item.sourceId === 'mangadex' ? 'MangaDex title' : item.sourceId === 'anilist' ? (state.detailsLink ? 'AniList title · chapters from MangaDex' : 'AniList title') : item.sourceId === 'mal' ? (state.detailsLink ? 'MyAnimeList title · chapters from MangaDex' : 'MyAnimeList title') : 'Local library item')}</span><h2 id="detailsTitle">${escapeHtml(item.title)}</h2><p>${escapeHtml(titleAuthor(item))}${item.releaseYear ? ` · ${escapeHtml(item.releaseYear)}` : ''}</p><div class="tag-row">${(item.tags || []).slice(0, 8).map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join('')}</div><p>${escapeHtml(item.description || 'No synopsis is available in the catalogue response.')}</p><p class="muted">Catalogue status: ${escapeHtml(item.publicationStatus || 'unknown')} · Rating: ${escapeHtml(item.contentRating || 'unknown')}</p>${fallbackNote}${metadataNotice}</div></div><div class="details-actions">${entry ? `<button class="button-subtle" data-action="mark-reading" data-id="${escapeHtml(item.id)}">${entry.personalStatus === 'reading' ? 'Currently reading' : 'Mark as reading'}</button>` : `<button class="button-subtle" data-action="save" data-id="${escapeHtml(item.id)}">Add to library</button>`}${sourceLink}${trackButton}</div>${trackingPanel}${linkable && (!state.detailsLink || state.link.changing) ? renderLinkPanel(rawItem) : ''}<section class="chapter-panel" ${linkable && (!state.detailsLink || state.link.changing) ? 'hidden' : ''}>${linkable && state.detailsLink ? renderLinkBanner(state.detailsLink) : ''}<div class="section-topline chapter-heading"><div><h3>Chapters</h3><p>Tap Read to open a chapter here. The ↗ button opens it on MangaDex.</p></div><label class="chapter-language-label">Language <select class="select-field" data-action="chapter-language" aria-label="Chapter language">${chapterLanguageOptions()}</select></label></div>${toolbar}${options}${state.detailsLoading ? '<p class="muted">Refreshing title metadata…</p>' : ''}${chapterNotice}${chapterRows ? `<div class="chapter-list">${chapterRows}</div>` : ''}${more ? `<div class="chapter-more-row">${more}</div>` : ''}</section><p class="footer-note">Chapter pages load directly from MangaDex. Chapters you download are saved only on this phone for your own reading. Tokyo Manga Lab never hosts, shares or uploads them.</p>`;
 }
 
 
@@ -1158,27 +1359,29 @@ async function setChapterView(change) {
   redrawDetails();
 }
 
-function trackerNote(result) {
-  if (result.outcome === 'sent') return `AniList updated: ${result.summary || 'saved'}.`;
-  if (result.outcome === 'queued') return 'AniList could not be reached. The update is saved on this device and will be sent later.';
+function trackerNote(result, label = 'AniList') {
+  if (result.outcome === 'sent') return `${label} updated: ${result.summary || 'saved'}.`;
+  if (result.outcome === 'queued') return `${label} could not be reached. The update is saved on this device and will be sent later.`;
   return '';
 }
 
-// A chapter was read, or marked read. The update is decided against AniList's current entry when it is sent.
+// A chapter was read, or marked read. Every connected tracker decides against its own current entry when it is sent.
 async function trackAndReport(item, chapterNumber) {
-  try {
-    const result = await trackChapterRead(item, chapterNumber);
-    const text = trackerNote(result);
-    if (text) toast(text);
-    if (document.getElementById('detailsDialog')?.open && state.detailsItemId === item.id) { await loadTrackSummary(item, state.detailsSequence); }
-  } catch (error) {
-    console.warn('AniList progress not sent:', error);
-    toast(error?.code === 'UNAUTHORIZED' ? 'AniList sign-in expired. Connect again in Settings.' : 'Could not update AniList. Try again later.');
+  for (const tracker of connectedTrackers()) {
+    try {
+      const result = await tracker.service.trackChapterRead(item, chapterNumber);
+      const text = trackerNote(result, tracker.label);
+      if (text) toast(text);
+    } catch (error) {
+      console.warn(`${tracker.label} progress not sent:`, error);
+      toast(error?.code === 'UNAUTHORIZED' ? tracker.expired : `Could not update ${tracker.label}. Try again later.`);
+    }
   }
+  if (document.getElementById('detailsDialog')?.open && state.detailsItemId === item.id) await loadTrackSummary(item, state.detailsSequence);
 }
 
 async function onChapterRead({ chapterId, contentItemId } = {}) {
-  if (!state.settings?.trackerAutoUpdate || !state.anilist.status.connected) return;
+  if (!state.settings?.trackerAutoUpdate || !connectedTrackers().length) return;
   const context = state.readerContext;
   const chapter = context?.chapters?.find(entry => entry.id === chapterId);
   if (!chapter || chapter.number === null || chapter.number === undefined || chapter.number === '') return; // extras do not count
@@ -1201,14 +1404,14 @@ async function markChaptersRead(chapterIds, read) {
   if (!read) return;
   const mode = state.settings?.trackerMarkRead || 'always';
   const top = Math.max(...chapters.map(chapter => progressNumber(chapter.chapterNumber) ?? -1));
-  if (mode === 'never' || top < 1) return;
-  if (mode === 'ask' && !window.confirm(`Update AniList to chapter ${top}?`)) return;
+  if (mode === 'never' || top < 1 || !connectedTrackers().length) return;
+  if (mode === 'ask' && !window.confirm(`Update ${connectedTrackers().map(tracker => tracker.label).join(' and ') || 'your tracker'} to chapter ${top}?`)) return;
   await trackAndReport(item, top);
 }
 
 async function loadTrackSummary(item, sequence) {
   try {
-    const summary = await getTrackingState(item);
+    const summary = await activeTracker().service.getTrackingState(item);
     if (sequence !== state.detailsSequence) return;
     state.track = { ...(state.track || idleTrack()), connected: summary.connected, mediaId: summary.mediaId, row: summary.row, pending: summary.pending };
     redrawDetails();
@@ -1220,14 +1423,15 @@ async function toggleTracking() {
   if (!item) return;
   if (state.track?.open) { state.track = { ...state.track, open: false }; redrawDetails(); return; }
   const sequence = state.detailsSequence;
-  state.track = { ...(state.track || idleTrack()), open: true, loading: true, note: '', noteKind: '' };
+  state.track = { ...(state.track || idleTrack()), provider: activeTracker().key, open: true, loading: true, note: '', noteKind: '' };
   redrawDetails();
   try {
-    let summary = await getTrackingState(item);
+    const tracker = activeTracker();
+    let summary = await tracker.service.getTrackingState(item);
     state.track = { ...state.track, connected: summary.connected, mediaId: summary.mediaId, row: summary.row, pending: summary.pending };
     if (summary.connected && summary.mediaId) {
-      try { summary = await pullTracking(item); state.track = { ...state.track, row: summary.row, pending: summary.pending }; }
-      catch (error) { state.track = { ...state.track, note: 'Could not reach AniList, so this shows the last saved copy.', noteKind: 'warn' }; }
+      try { summary = await tracker.service.pullTracking(item); state.track = { ...state.track, row: summary.row, pending: summary.pending }; }
+      catch (error) { state.track = { ...state.track, note: `Could not reach ${tracker.label}, so this shows the last saved copy.`, noteKind: 'warn' }; }
     } else if (summary.connected) {
       state.track = { ...state.track, search: { query: item.title || '', status: 'idle', results: [], message: '' } };
     }
@@ -1243,10 +1447,10 @@ async function runTrackSearch(query) {
   state.track = { ...state.track, search: { query: text, status: 'loading', results: [], message: '' } };
   redrawDetails();
   try {
-    const results = await searchTitles(text, { allowAdult: adultActive() });
+    const results = await activeTracker().service.searchTitles(text, { allowAdult: adultActive() });
     state.track = { ...state.track, search: { query: text, status: 'done', results, message: '' } };
   } catch (error) {
-    state.track = { ...state.track, search: { query: text, status: 'error', results: [], message: error?.message || 'AniList search failed.' } };
+    state.track = { ...state.track, search: { query: text, status: 'error', results: [], message: error?.message || `${activeTracker().label} search failed.` } };
   }
   redrawDetails();
 }
@@ -1255,19 +1459,21 @@ async function linkTrackTitle(mediaId) {
   const item = currentDetailsItem();
   const media = (state.track?.search?.results || []).find(entry => String(entry.id) === String(mediaId));
   if (!item || !media) return;
-  await linkTitle(item, media);
+  const tracker = activeTracker();
+  await tracker.service.linkTitle(item, media);
   state.track = { ...state.track, mediaId: String(media.id), row: null, loading: true, note: '', noteKind: '' };
   redrawDetails();
-  try { const summary = await pullTracking(item); state.track = { ...state.track, row: summary.row, pending: summary.pending }; }
-  catch (error) { state.track = { ...state.track, note: 'Linked. AniList could not be reached for your entry just now.', noteKind: 'warn' }; }
+  try { const summary = await tracker.service.pullTracking(item); state.track = { ...state.track, row: summary.row, pending: summary.pending }; }
+  catch (error) { state.track = { ...state.track, note: `Linked. ${tracker.label} could not be reached for your entry just now.`, noteKind: 'warn' }; }
   state.track = { ...state.track, loading: false };
   redrawDetails();
 }
 
 async function unlinkTrackTitle() {
   const item = currentDetailsItem();
-  if (!item || !window.confirm('Track a different AniList title? This only changes the link on this device. Nothing is deleted on AniList.')) return;
-  await unlinkTitle(item);
+  const tracker = activeTracker();
+  if (!item || !window.confirm(`Track a different ${tracker.label} title? This only changes the link on this device. Nothing is deleted on ${tracker.label}.`)) return;
+  await tracker.service.unlinkTitle(item);
   state.track = { ...state.track, mediaId: null, row: null, pending: false, note: '', noteKind: '', search: { query: item.title || '', status: 'idle', results: [], message: '' } };
   redrawDetails();
 }
@@ -1276,11 +1482,12 @@ async function commitTracking(patch) {
   const item = currentDetailsItem();
   if (!item) return;
   try {
-    const result = await saveTracking(item, patch);
-    const summary = await getTrackingState(item);
-    state.track = { ...state.track, row: summary.row, pending: summary.pending, note: result.outcome === 'sent' ? `Saved to AniList: ${result.summary}.` : 'Saved on this device. It will be sent to AniList when it can be reached.', noteKind: result.outcome === 'sent' ? 'ok' : 'queued' };
+    const tracker = activeTracker();
+    const result = await tracker.service.saveTracking(item, patch);
+    const summary = await tracker.service.getTrackingState(item);
+    state.track = { ...state.track, row: summary.row, pending: summary.pending, note: result.outcome === 'sent' ? `Saved to ${tracker.label}: ${result.summary}.` : `Saved on this device. It will be sent to ${tracker.label} when it can be reached.`, noteKind: result.outcome === 'sent' ? 'ok' : 'queued' };
   } catch (error) {
-    state.track = { ...state.track, note: error?.code === 'UNAUTHORIZED' ? 'AniList sign-in expired. Connect again in Settings.' : (error?.message || 'Could not save that.'), noteKind: 'error' };
+    state.track = { ...state.track, note: error?.code === 'UNAUTHORIZED' ? activeTracker().expired : (error?.message || 'Could not save that.'), noteKind: 'error' };
   }
   redrawDetails();
 }
@@ -1315,14 +1522,15 @@ function rerenderDetails(item) { renderDetailsContent(currentDetailsItem() || it
 async function selectLinkCandidate(mangadexId) {
   const item = currentDetailsItem();
   const candidate = state.link.candidates.find(row => row.externalId === mangadexId);
-  if (!isLinkableAniListItem(item) || !candidate) return;
-  if (candidate.idStatus === 'other' && !window.confirm(`MangaDex lists AniList #${candidate.anilistId} for "${candidate.title}", not #${item.externalId}. Link it anyway?`)) return;
-  await applyLink(item, candidate, candidate.idStatus === 'exact' ? 'anilist-id' : 'user-selected', state.detailsSequence);
+  if (!isLinkableTrackerItem(item) || !candidate) return;
+  const trackerName = item.sourceId === 'mal' ? 'MyAnimeList' : 'AniList';
+  if (candidate.idStatus === 'other' && !window.confirm(`MangaDex lists ${trackerName} #${candidate[trackerIdKey(item)]} for "${candidate.title}", not #${item.externalId}. Link it anyway?`)) return;
+  await applyLink(item, candidate, candidate.idStatus === 'exact' ? (item.sourceId === 'mal' ? 'mal-id' : 'anilist-id') : 'user-selected', state.detailsSequence);
 }
 
 async function unlinkMangaDex() {
   const item = currentDetailsItem();
-  if (!isLinkableAniListItem(item) || !state.detailsLink) return;
+  if (!isLinkableTrackerItem(item) || !state.detailsLink) return;
   if (!window.confirm('Unlink this title from MangaDex? Your library entry and reading history stay.')) return;
   await removeMangaDexLink(item.id);
   state.detailsLink = null;
@@ -1346,7 +1554,7 @@ async function applyLink(item, candidate, kind, sequence) {
   state.detailsLink = row;
   state.link = idleLink();
   rerenderDetails(item);
-  toast(kind === 'anilist-id' ? 'Linked to MangaDex by its AniList ID.' : duplicate ? 'Linked. This MangaDex title is also saved separately in your library.' : 'Linked to MangaDex.');
+  toast(kind === 'anilist-id' ? 'Linked to MangaDex by its AniList ID.' : kind === 'mal-id' ? 'Linked to MangaDex by its MyAnimeList ID.' : duplicate ? 'Linked. This MangaDex title is also saved separately in your library.' : 'Linked to MangaDex.');
   await loadLinkedChapters(row, sequence);
   return row;
 }
@@ -1360,7 +1568,7 @@ async function runLinkMatching(item, sequence) {
   try {
     const result = await findMangaDexMatch(item, { search: mangaDexSearch, filter: isRatingVisible });
     if (sequence !== state.detailsSequence) return;
-    if (result.status === 'exact') { await applyLink(item, result.candidate, 'anilist-id', sequence); return; }
+    if (result.status === 'exact') { await applyLink(item, result.candidate, item.sourceId === 'mal' ? 'mal-id' : 'anilist-id', sequence); return; }
     state.link = { ...idleLink(), status: 'candidates', candidates: result.candidates, query: state.link.query, message: result.partialFailure ? 'Some searches failed, so this list may be incomplete.' : '' };
   } catch (error) {
     if (sequence !== state.detailsSequence) return;
@@ -1388,31 +1596,33 @@ async function runLinkSearch(item, query, { changing = false } = {}) {
 
 function renderLinkPanel(item) {
   const link = state.link;
+  const trackerName = item.sourceId === 'mal' ? 'MyAnimeList' : 'AniList';
+  const idKey = trackerIdKey(item);
   const query = link.query || item.title || '';
   const form = `<form class="link-search" data-form="link-search" role="search"><label class="sr-only" for="linkQuery">Search MangaDex</label><input id="linkQuery" name="q" class="field" type="search" autocomplete="off" maxlength="100" value="${escapeHtml(query)}" placeholder="Search MangaDex by title"><button class="button" type="submit">Search</button></form>`;
   const cancel = link.changing ? '<button class="button-subtle" type="button" data-action="link-cancel">Keep current link</button>' : '';
   let body = '';
-  if (link.status === 'searching') body = `<div class="empty-state chapter-empty"><span class="spinner"></span><strong>Looking for this title on MangaDex…</strong><span>Checking for a title that lists AniList ID ${escapeHtml(item.externalId)}.</span></div>`;
+  if (link.status === 'searching') body = `<div class="empty-state chapter-empty"><span class="spinner"></span><strong>Looking for this title on MangaDex…</strong><span>Checking for a title that lists ${trackerName} ID ${escapeHtml(item.externalId)}.</span></div>`;
   else if (link.status === 'error') body = `<div class="notice warning"><strong>MangaDex search unavailable.</strong> ${escapeHtml(link.message)}</div>`;
-  else if (link.status === 'idle') body = `<p class="muted">Chapters come from MangaDex. Link this AniList title to its MangaDex page to list and read them here.</p><div class="details-actions"><button class="button-primary" type="button" data-action="link-find">Find on MangaDex</button></div>`;
+  else if (link.status === 'idle') body = `<p class="muted">Chapters come from MangaDex. Link this ${trackerName} title to its MangaDex page to list and read them here.</p><div class="details-actions"><button class="button-primary" type="button" data-action="link-find">Find on MangaDex</button></div>`;
   else {
     const rows = link.candidates.map(candidate => {
       const url = safeMangaDexTitleUrl(candidate.sourceUrl);
-      const badge = candidate.idStatus === 'exact' ? '<span class="pill-label accent">AniList ID matches</span>'
-        : candidate.idStatus === 'other' ? `<span class="pill-label warn">MangaDex lists AniList #${escapeHtml(candidate.anilistId)} for this title</span>`
-        : '<span class="pill-label">No AniList ID on MangaDex</span>';
+      const badge = candidate.idStatus === 'exact' ? `<span class="pill-label accent">${trackerName} ID matches</span>`
+        : candidate.idStatus === 'other' ? `<span class="pill-label warn">MangaDex lists ${trackerName} #${escapeHtml(candidate[idKey])} for this title</span>`
+        : `<span class="pill-label">No ${trackerName} ID on MangaDex</span>`;
       const meta = [candidate.releaseYear, candidate.publicationStatus !== 'unknown' ? candidate.publicationStatus : '', (candidate.authors || []).slice(0, 2).join(', ')].filter(Boolean).join(' · ');
       return `<article class="link-candidate"><div class="link-candidate-cover">${coverMarkup(candidate, true)}</div><div class="link-candidate-main"><strong>${escapeHtml(candidate.title)}</strong><small>${escapeHtml(meta || 'No details')}</small>${badge}${url ? `<a class="link-candidate-open" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Preview on MangaDex ↗</a>` : ''}</div><button class="button-primary button-small" type="button" data-action="link-select" data-md-id="${escapeHtml(candidate.externalId)}">${candidate.idStatus === 'other' ? 'Link anyway' : 'Link'}</button></article>`;
     }).join('');
-    const intro = link.changing ? 'Choose the MangaDex title to use for chapters.' : `No MangaDex title lists AniList ID ${escapeHtml(item.externalId)}, so nothing was matched automatically. Pick the right title, or search by another name.`;
+    const intro = link.changing ? 'Choose the MangaDex title to use for chapters.' : `No MangaDex title lists ${trackerName} ID ${escapeHtml(item.externalId)}, so nothing was matched automatically. Pick the right title, or search by another name.`;
     body = `<p class="muted">${intro}</p>${link.message ? `<div class="notice warning">${escapeHtml(link.message)}</div>` : ''}${rows ? `<div class="link-candidates">${rows}</div>` : '<div class="empty-state chapter-empty"><strong>No MangaDex results.</strong><span>Try another spelling or the native title.</span></div>'}`;
   }
-  return `<section class="chapter-panel link-panel"><div class="section-topline chapter-heading"><div><h3>Find chapters on MangaDex</h3><p>Chapter lists and the reader use MangaDex. Your AniList info stays as it is.</p></div></div>${form}${body}${cancel}</section>`;
+  return `<section class="chapter-panel link-panel"><div class="section-topline chapter-heading"><div><h3>Find chapters on MangaDex</h3><p>Chapter lists and the reader use MangaDex. Your ${trackerName} info stays as it is.</p></div></div>${form}${body}${cancel}</section>`;
 }
 
 function renderLinkBanner(row) {
   const url = safeMangaDexTitleUrl(row.sourceUrl);
-  const how = row.linkKind === 'anilist-id' ? 'matched by AniList ID' : 'chosen by you';
+  const how = row.linkKind === 'anilist-id' ? 'matched by AniList ID' : row.linkKind === 'mal-id' ? 'matched by MyAnimeList ID' : 'chosen by you';
   return `<div class="link-banner"><div><strong>Chapters from MangaDex</strong><small>${escapeHtml(row.sourceTitle || 'MangaDex title')} · ${how}</small></div><div class="link-banner-actions">${url ? `<a class="button button-small" href="${escapeHtml(url)}" target="_blank" rel="noopener noreferrer">Open ↗</a>` : ''}<button class="button button-small" type="button" data-action="link-change">Change</button><button class="button button-small button-danger" type="button" data-action="link-remove">Unlink</button></div></div>`;
 }
 
@@ -1487,7 +1697,7 @@ async function openDetails(contentItemId) {
   }
 
   // An AniList-only title borrows its chapters from a linked MangaDex record (see docs/LINKING.md).
-  if (isLinkableAniListItem(item)) {
+  if (isLinkableTrackerItem(item)) {
     try { state.detailsLink = await getMangaDexLink(item.id); } catch (error) { console.warn('Could not read the MangaDex link:', error); }
     if (sequence !== state.detailsSequence) return;
     state.detailsLoading = false;
@@ -1576,7 +1786,7 @@ async function toggleLibrary(itemId) {
     toast('Removed from your library. Progress and cached metadata are preserved.');
   } else {
     await addToLibrary(item, 'planned');
-    queueAniListPush(item.id);
+    queueAniListPush(item.id); queueMalPush(item.id);
     toast('Added to your local library.');
   }
   await refreshLibraryIndex();
@@ -1588,7 +1798,7 @@ async function markReading(itemId) {
   const item = findItem(itemId);
   if (!item) { toast('Title unavailable. Search again to reload its metadata.'); return; }
   await setLibraryStatus(item, 'reading');
-  queueAniListPush(item.id);
+  queueAniListPush(item.id); queueMalPush(item.id);
   await refreshLibraryIndex();
   toast('Status saved as Reading.');
   await app.navigate(app.currentRoute());
@@ -1749,6 +1959,25 @@ async function checkApi() {
   }
 }
 
+async function checkAllConnections() {
+  const result = document.getElementById('connectionsResult');
+  if (result) { result.style.whiteSpace = 'pre-line'; result.textContent = 'Testing connections…'; }
+  const probes = {
+    mangadex: async () => {
+      const { apiClient } = await import('./services/api-client.js');
+      await apiClient.health();
+      await apiClient.mangaSearch({ query: 'one piece' });
+      return 'search works';
+    }
+  };
+  if (describeAccount(await getAccount()).connected) probes.anilist = async () => { const { client } = await activeAniListClient(); return (await client.viewer()).name; };
+  if (describeMal(await getMalAccount()).connected) probes.mal = async () => { const { client } = await activeMalClient(); return (await client.viewer()).name; };
+  const outcome = await checkConnections(probes);
+  setConnectionStatus(outcome.results.find(row => row.key === 'mangadex')?.ok ? 'online' : 'offline', outcome.results.find(row => row.key === 'mangadex')?.ok ? 'MangaDex online' : 'Catalogue offline');
+  if (result) result.textContent = outcome.summary;
+  toast(outcome.allOk ? 'All connections work.' : 'A connection has a problem. See Settings.');
+}
+
 async function handleAction(action, target) {
   const id = target.dataset.id;
   if (action.startsWith('download-') && dlc && await dlc.handleAction(action, target)) return;
@@ -1790,14 +2019,23 @@ async function handleAction(action, target) {
     case 'chapter-mark-previous': await markChaptersRead([target.dataset.chapterId, ...chaptersBefore(state.detailsChapters, target.dataset.chapterId).map(chapter => chapter.externalId)], true); break;
     case 'chapter-bookmark': { const item = currentDetailsItem(); if (item) { await setBookmark(item.id, target.dataset.chapterId, target.dataset.on === '1'); await refreshChapterMarks(); state.chapterMenuId = null; redrawDetails(); toast(target.dataset.on === '1' ? 'Bookmarked.' : 'Bookmark removed.'); } break; }
     case 'track-toggle': await toggleTracking(); break;
+    case 'track-provider': {
+      const item = currentDetailsItem();
+      if (!item || !TRACKERS[target.dataset.provider]) break;
+      state.track = { ...idleTrack(), provider: target.dataset.provider, open: true };
+      redrawDetails();
+      state.track = { ...state.track, open: false };
+      await toggleTracking();
+      break;
+    }
     case 'track-close': state.track = { ...state.track, open: false }; redrawDetails(); break;
     case 'track-step': { const row = state.track?.row; const next = Math.max(0, (Number(row?.progress) || 0) + Number(target.dataset.delta || 0)); await commitTracking({ progress: next }); break; }
     case 'track-link': await linkTrackTitle(target.dataset.mediaId); break;
     case 'track-unlink': await unlinkTrackTitle(); break;
     case 'track-go-settings': closeDetails(); break;
-    case 'link-find': { const item = currentDetailsItem(); if (isLinkableAniListItem(item)) await runLinkMatching(item, state.detailsSequence); break; }
+    case 'link-find': { const item = currentDetailsItem(); if (isLinkableTrackerItem(item)) await runLinkMatching(item, state.detailsSequence); break; }
     case 'link-select': await selectLinkCandidate(target.dataset.mdId); break;
-    case 'link-change': { const item = currentDetailsItem(); if (isLinkableAniListItem(item)) await runLinkSearch(item, item.title, { changing: true }); break; }
+    case 'link-change': { const item = currentDetailsItem(); if (isLinkableTrackerItem(item)) await runLinkSearch(item, item.title, { changing: true }); break; }
     case 'link-cancel': { state.link = idleLink(); rerenderDetails(currentDetailsItem()); break; }
     case 'link-remove': await unlinkMangaDex(); break;
     case 'retry-search': await loadSearch(state.query, state.page); break;
@@ -1827,11 +2065,19 @@ async function handleAction(action, target) {
     case 'recent-clear': if (window.confirm('Clear Recent? Your library, reading progress and stats are kept.')) { await clearHistory(); await app.navigate('recent'); toast('Recent cleared.'); } break;
     case 'planned-feature': toast(`${target.dataset.title || 'This feature'} is planned and not available yet.`); break;
     case 'check-api': await checkApi(); break;
+    case 'check-connections': await checkAllConnections(); break;
     case 'check-updates': await checkUpdatesNow(); break;
     case 'updates-clear': await updates.clearAll(); toast('New chapters cleared.'); break;
     case 'update-open': await updates.markTitleRead(id); openDetails(id); break;
     case 'update-dismiss': await updates.dismissTitle(id); break;
     case 'enable-alerts': await enableAlerts(); break;
+    case 'mal-connect': await startMalSignIn(); break;
+    case 'mal-register': openAniListPage(MAL_REGISTER_URL); break;
+    case 'mal-apps': openAniListPage(MAL_APPS_URL); break;
+    case 'mal-card-hide': setMalCardHidden(true); await app.navigate('profile'); break;
+    case 'mal-card-show': setMalCardHidden(false); await app.navigate('profile'); break;
+    case 'mal-sync': await syncMal(); break;
+    case 'mal-disconnect': await signOutMal(); break;
     case 'anilist-connect': await startAniListSignIn(); break;
     case 'anilist-register': openAniListPage(ANILIST_REGISTER_URL); break;
     case 'anilist-apps': openAniListPage(ANILIST_APPS_URL); break;
@@ -1866,7 +2112,7 @@ function bindUiEvents() {
     if (linkForm) {
       event.preventDefault();
       const item = currentDetailsItem();
-      if (isLinkableAniListItem(item)) runLinkSearch(item, new FormData(linkForm).get('q'), { changing: state.link.changing });
+      if (isLinkableTrackerItem(item)) runLinkSearch(item, new FormData(linkForm).get('q'), { changing: state.link.changing });
       return;
     }
     const form = event.target.closest('form[data-form="search"]');
@@ -1895,7 +2141,7 @@ function bindUiEvents() {
         const itemId = input.dataset.libraryStatus;
         const row = state.library.find(entry => entry.contentItemId === itemId);
         const item = row?.item || state.results.find(entry => entry.id === itemId);
-        if (item) { await setLibraryStatus(item, input.value); queueAniListPush(item.id); await refreshLibraryIndex(); await app.navigate('library'); toast('Reading status updated.'); }
+        if (item) { await setLibraryStatus(item, input.value); queueAniListPush(item.id); queueMalPush(item.id); await refreshLibraryIndex(); await app.navigate('library'); toast('Reading status updated.'); }
       } else if (input.matches('[data-chapter-view]')) {
         const name = input.dataset.chapterView;
         if (name === 'display') await setChapterView({ display: input.value });
@@ -1935,8 +2181,14 @@ function bindUiEvents() {
   document.getElementById('filterDialog').addEventListener('click', event => { if (event.target.id === 'filterDialog') closeFilterSheet(); });
   downloadDialog.addEventListener('cancel', event => { event.preventDefault(); dlc.closePicker(); });
   // Changes that were waiting for AniList go out as soon as the phone is back online.
-  window.addEventListener('online', () => { downloads.kick(); checkConnection(); if (state.anilist.status.connected) flushOutbox().catch(error => console.warn('AniList outbox not sent:', error.message)); });
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && document.getElementById('connectionStatus')?.dataset.state === 'offline') checkConnection(); });
+  window.addEventListener('online', () => { downloads.kick(); checkConnection(); flushQueuedUpdates({ ignoreWait: true }); });
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'visible') return;
+    if (document.getElementById('connectionStatus')?.dataset.state === 'offline') checkConnection();
+    flushQueuedUpdates();
+  });
+  // While the app is open, anything still waiting is tried again every few minutes.
+  setInterval(() => { if (document.visibilityState === 'visible') flushQueuedUpdates(); }, QUEUE_RETRY_MS);
   // The reader tells us when a chapter was finished.
   document.addEventListener('tml:chapter-read', event => { onChapterRead(event.detail).catch(error => console.warn('Tracking after reading failed:', error)); });
   document.getElementById('backupFileInput').addEventListener('change', async event => {
@@ -1974,7 +2226,8 @@ async function initialize() {
     applyTheme();
     await refreshLibraryIndex();
     await refreshAniList();
-    await listenForAppLinks(handleAniListRedirect);
+    await refreshMal();
+    await listenForAppLinks(handleAppLink);
     bindNavigation(route => { app.navigate(route); });
     hideSplash();
     // Show the screen first; the catalogue fills in when it answers, so a slow connection never blocks the app.
@@ -1992,7 +2245,7 @@ async function initialize() {
       console.warn('Catalogue health check failed:', error.message);
     }
     updates.start();
-    if (state.anilist.status.connected) flushOutbox().catch(error => console.warn('AniList outbox not sent:', error.message));
+    flushQueuedUpdates();
     if ('serviceWorker' in navigator && location.protocol !== 'file:') {
       navigator.serviceWorker.register(`./sw.js?v=${encodeURIComponent(APP_VERSION)}`).catch(error => console.warn('Offline app-shell registration skipped:', error));
     }

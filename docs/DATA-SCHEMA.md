@@ -95,3 +95,6 @@ Key/value preferences for appearance, reader, default library sorting, privacy, 
 
 ### `updateWatch` and `chapterUpdates`
 Added in database version 4 (1.1.0). `updateWatch` (keyPath `id` = the content item id): the starting point for new-chapter checks, `externalId`, `latestChapterId`, `since`, `checkedAt`, `seenIds` (up to 40); the special row `__meta` keeps `lastRunAt`, `lastError`, `lastFound`, `watched`. `chapterUpdates` (keyPath `id` = chapter id, indexes `foundAt`, `contentItemId`): the Updates list, with the chapter fields needed to open or download it, a `read` flag and `foundAt`; trimmed to the newest 200. Not included in backups (they are rebuilt by the next check); clearing them never touches progress.
+
+### MyAnimeList records (1.2.0)
+No new stores and no database upgrade. `accountLinks` gets a row with `provider: "mal"` (tokens, client ID, viewer, `lastSync`, `profile`) and a short-lived `mal-pending` row while sign-in is open (verifier, state). `syncLinks` rows with `provider: "mal"` (and `mal-track` for the Tracking panel copy) and `syncOutbox` rows with `provider: "mal"` mirror the AniList ones. MyAnimeList ids live in `sourceEntries` as `mal:<id>`; a MangaDex title that lists a MyAnimeList id gets that row too. None of this is in a backup.

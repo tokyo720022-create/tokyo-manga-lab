@@ -37,7 +37,8 @@ function normalizeManga(raw) {
     contentRating: raw.contentRating || 'unknown',
     lastChapter: raw.lastChapter ? String(raw.lastChapter).slice(0, 12) : null,
     latestChapter: raw.latestChapter?.number ? { number: String(raw.latestChapter.number).slice(0, 12), publishedAt: raw.latestChapter.publishedAt || null } : null,
-    anilistId: /^\d{1,9}$/.test(String(raw.anilistId ?? '')) ? String(raw.anilistId) : null
+    anilistId: /^\d{1,9}$/.test(String(raw.anilistId ?? '')) ? String(raw.anilistId) : null,
+    malId: /^\d{1,9}$/.test(String(raw.malId ?? '')) ? String(raw.malId) : null
   };
 }
 

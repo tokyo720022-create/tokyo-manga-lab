@@ -22,6 +22,9 @@ export const DEFAULT_SETTINGS = Object.freeze({
   readerSkipExtras: false,
   anilistClientId: '',
   anilistPushEnabled: false,
+  malClientId: '',
+  malPushEnabled: false,
+  profileSource: 'anilist',
   trackerAutoUpdate: true,
   trackerMarkRead: 'always',
   chapterSortKey: 'source',
@@ -40,7 +43,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
   autoDownloadMax: '3'
 });
 
-const BOOLEAN_KEYS = new Set(['adultContentEnabled', 'reducedMotion', 'enableOnlineSearch', 'anilistPushEnabled', 'readerShowStatusBar', 'readerShowClock', 'readerVolumeKeys', 'readerChapterNotice', 'readerSkipExtras', 'trackerAutoUpdate', 'chapterFilterUnread', 'chapterFilterBookmarked', 'downloadWifiOnly', 'updatesEnabled', 'updatesPhoneAlerts', 'autoDownloadEnabled']);
+const BOOLEAN_KEYS = new Set(['adultContentEnabled', 'reducedMotion', 'enableOnlineSearch', 'anilistPushEnabled', 'malPushEnabled', 'readerShowStatusBar', 'readerShowClock', 'readerVolumeKeys', 'readerChapterNotice', 'readerSkipExtras', 'trackerAutoUpdate', 'chapterFilterUnread', 'chapterFilterBookmarked', 'downloadWifiOnly', 'updatesEnabled', 'updatesPhoneAlerts', 'autoDownloadEnabled']);
 
 // Allowed values for every select setting come from the schema, so the UI and validation cannot drift apart.
 function allowedValues(key) {
@@ -59,6 +62,11 @@ export function normalizeSettingValue(key, value) {
   if (key === 'anilistClientId') {
     const text = String(value ?? '').trim();
     if (!/^\d{0,9}$/.test(text)) throw new Error('The AniList client ID is a number, for example 12345.');
+    return text;
+  }
+  if (key === 'malClientId') {
+    const text = String(value ?? '').trim();
+    if (!/^[A-Za-z0-9]{0,64}$/.test(text)) throw new Error('The MyAnimeList client ID is letters and numbers only (about 32 characters).');
     return text;
   }
   const allowed = allowedValues(key);

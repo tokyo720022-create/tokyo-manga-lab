@@ -19,6 +19,13 @@ export function isLinkableAniListItem(item) {
   return Boolean(item) && item.sourceId === 'anilist' && isAniListNumericId(item.externalId);
 }
 
+// An AniList or MyAnimeList title that has no MangaDex record of its own and so cannot list chapters.
+export function isLinkableTrackerItem(item) {
+  return Boolean(item) && (item.sourceId === 'anilist' || item.sourceId === 'mal') && isAniListNumericId(item.externalId);
+}
+// Which id on a MangaDex candidate says "this is that title" for the given tracker title.
+export const trackerIdKey = item => (item?.sourceId === 'mal' ? 'malId' : 'anilistId');
+
 export const linkRowId = contentItemId => `${LINK_ROLE}:${contentItemId}`;
 
 // Distinct, trimmed search texts: the main title first, then up to two alternates (romaji / native).
@@ -39,14 +46,14 @@ export function searchQueriesFor(item) {
 // 'exact'  = MangaDex lists this very AniList ID for the candidate.
 // 'other'  = MangaDex lists a different AniList ID, so it is probably another work (flagged, never auto-linked).
 // 'none'   = MangaDex lists no AniList ID, so only a person can decide.
-export function idStatus(candidate, anilistId) {
-  const theirs = candidate?.anilistId == null ? '' : String(candidate.anilistId);
+export function idStatus(candidate, anilistId, key = 'anilistId') {
+  const theirs = candidate?.[key] == null ? '' : String(candidate[key]);
   if (!isAniListNumericId(theirs)) return 'none';
   return theirs === String(anilistId) ? 'exact' : 'other';
 }
 
-export function annotateCandidates(candidates, anilistId) {
-  return candidates.map(candidate => ({ ...candidate, idStatus: idStatus(candidate, anilistId) }));
+export function annotateCandidates(candidates, anilistId, key = 'anilistId') {
+  return candidates.map(candidate => ({ ...candidate, idStatus: idStatus(candidate, anilistId, key) }));
 }
 
 const RANK = { exact: 0, none: 1, other: 2 };
@@ -69,9 +76,10 @@ function mergeUnique(into, items) {
 // Returns { status: 'exact', candidate } when exactly one candidate carries this AniList ID,
 // otherwise { status: 'candidates', candidates, queries } for the picker (possibly empty).
 export async function findMangaDexMatch(item, { search, filter = () => true } = {}) {
-  if (!isLinkableAniListItem(item)) throw new TypeError('Only AniList-only titles can be linked.');
+  if (!isLinkableTrackerItem(item)) throw new TypeError('Only AniList-only or MyAnimeList-only titles can be linked.');
   if (typeof search !== 'function') throw new TypeError('A search function is required.');
   const anilistId = String(item.externalId);
+  const idKey = trackerIdKey(item);
   const queries = searchQueriesFor(item);
   const pool = [];
   const tried = [];
@@ -88,12 +96,12 @@ export async function findMangaDexMatch(item, { search, filter = () => true } = 
       continue;
     }
     mergeUnique(pool, found.filter(filter));
-    const exact = pool.filter(candidate => idStatus(candidate, anilistId) === 'exact');
+    const exact = pool.filter(candidate => idStatus(candidate, anilistId, idKey) === 'exact');
     if (exact.length === 1) return { status: 'exact', candidate: exact[0], queries: tried };
     if (exact.length > 1) break; // ambiguous exact matches are shown to the person instead of picking one
   }
   if (failures && !tried.length) throw lastError;
-  const ranked = rankCandidates(annotateCandidates(pool, anilistId)).slice(0, MAX_CANDIDATES);
+  const ranked = rankCandidates(annotateCandidates(pool, anilistId, idKey)).slice(0, MAX_CANDIDATES);
   return { status: 'candidates', candidates: ranked, queries: tried, partialFailure: failures > 0 };
 }
 
@@ -104,15 +112,15 @@ export async function searchCandidates(item, query, { search, filter = () => tru
   const found = ((await search(text)) || []).filter(filter);
   const pool = [];
   mergeUnique(pool, found);
-  const ranked = rankCandidates(annotateCandidates(pool, item?.externalId)).slice(0, MAX_CANDIDATES);
+  const ranked = rankCandidates(annotateCandidates(pool, item?.externalId, trackerIdKey(item))).slice(0, MAX_CANDIDATES);
   return { candidates: ranked, query: text };
 }
 
 // The stored link. Metadata from MangaDex is kept only as a snapshot to fill blanks.
 export function buildLinkRow(item, candidate, kind, now = new Date().toISOString()) {
-  if (!isLinkableAniListItem(item)) throw new TypeError('Only AniList-only titles can be linked.');
+  if (!isLinkableTrackerItem(item)) throw new TypeError('Only AniList-only or MyAnimeList-only titles can be linked.');
   if (!isMangaDexId(candidate?.externalId)) throw new TypeError('That is not a MangaDex title ID.');
-  if (!['anilist-id', 'user-selected'].includes(kind)) throw new TypeError('Unknown link kind.');
+  if (!['anilist-id', 'mal-id', 'user-selected'].includes(kind)) throw new TypeError('Unknown link kind.');
   const externalId = String(candidate.externalId).toLowerCase();
   return {
     id: linkRowId(item.id),
@@ -126,7 +134,7 @@ export function buildLinkRow(item, candidate, kind, now = new Date().toISOString
     availabilityStatus: 'available',
     lastCheckedAt: now,
     linkKind: kind,
-    linkedAnilistId: String(item.externalId),
+    ...(item.sourceId === 'mal' ? { linkedMalId: String(item.externalId) } : { linkedAnilistId: String(item.externalId) }),
     linkedAt: now,
     fallback: {
       description: String(candidate.description || '').slice(0, 4000),

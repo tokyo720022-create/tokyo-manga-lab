@@ -59,6 +59,19 @@ export async function cacheCatalogueItems(items) {
         });
       }
     }
+    // The same for an exact MyAnimeList id.
+    const malId = raw.malId == null ? '' : String(raw.malId);
+    if (/^\d{1,9}$/.test(malId)) {
+      const linkKey = `mal:${malId}`;
+      const taken = await getRecord('sourceEntries', linkKey);
+      if (!taken || taken.contentItemId === item.id) {
+        sourceEntries.push({
+          id: linkKey, contentItemId: item.id, sourceId: 'mal', externalId: malId,
+          sourceUrl: `https://myanimelist.net/manga/${malId}`, sourceTitle: item.title, language: null,
+          availabilityStatus: 'available', lastCheckedAt: now
+        });
+      }
+    }
   }
   await Promise.all([putMany('contentItems', contentItems), putMany('sourceEntries', sourceEntries)]);
   return contentItems;

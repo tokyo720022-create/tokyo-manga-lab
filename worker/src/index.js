@@ -76,8 +76,8 @@ function isAllowedOrigin(origin) {
 
 function corsHeaders(origin) {
   const headers = {
-    "Access-Control-Allow-Methods": "GET, OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Methods": "GET, POST, PATCH, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
     "Access-Control-Max-Age": "86400",
     "Vary": "Origin"
   };
@@ -257,19 +257,58 @@ async function fetchMangaDexOnce(url, cache) {
   }
 }
 
+// Last good answers are kept for a day. When MangaDex is down, too slow or rate-limiting us, the person gets the last
+// good copy of the same request instead of an error (the app still shows what it showed before). Only cacheable
+// catalogue data is kept: never the short-lived page-image addresses.
+const STALE_KEY_BASE = "https://stale.tokyo-manga-lab.invalid/";
+const STALE_SECONDS = 24 * 60 * 60;
+const staleKey = url => new Request(STALE_KEY_BASE + encodeURIComponent(url.toString()));
+const staleCache = () => (typeof caches !== "undefined" && caches.default ? caches.default : null);
+
+async function rememberGood(url, payload) {
+  const store = staleCache();
+  if (!store) return;
+  try {
+    await store.put(staleKey(url), new Response(JSON.stringify(payload), { headers: { "Content-Type": "application/json", "Cache-Control": `public, max-age=${STALE_SECONDS}` } }));
+  } catch { /* remembering is best effort */ }
+}
+
+async function lastGood(url) {
+  const store = staleCache();
+  if (!store) return null;
+  try {
+    const hit = await store.match(staleKey(url));
+    return hit ? await hit.json() : null;
+  } catch { return null; }
+}
+
+// A failure worth falling back for: MangaDex could not be reached, timed out, rate-limited us, or had a server error.
+const isOutage = error => error.status === undefined || error.status === 429 || error.status >= 500;
+
 // One quiet retry for a dropped connection or a gateway error (502/503/504). Anything else, including rate limits and
-// "not found", is passed straight back so the app can show the right message.
+// "not found", is passed straight back (after trying the last good copy for outages) so the app can show the right message.
 async function fetchMangaDex(path, params = {}, { cache = true } = {}) {
   const url = new URL(API_BASE + path);
   for (const [key, value] of params) url.searchParams.append(key, String(value));
+  let payload;
   try {
-    return await fetchMangaDexOnce(url, cache);
+    try {
+      payload = await fetchMangaDexOnce(url, cache);
+    } catch (error) {
+      const transient = error.status === undefined || error.status === 502 || error.status === 503 || error.status === 504;
+      if (!transient) throw error;
+      await new Promise(resolve => setTimeout(resolve, 350));
+      payload = await fetchMangaDexOnce(url, cache);
+    }
   } catch (error) {
-    const transient = error.status === undefined || error.status === 502 || error.status === 503 || error.status === 504;
-    if (!transient) throw error;
-    await new Promise(resolve => setTimeout(resolve, 350));
-    return fetchMangaDexOnce(url, cache);
+    if (cache && isOutage(error)) {
+      const old = await lastGood(url);
+      if (old) return old;
+    }
+    throw error;
   }
+  if (cache) await rememberGood(url, payload);
+  return payload;
 }
 
 function ratingParams(allowAdult) {
@@ -632,6 +671,172 @@ async function handleV1Pages(id, origin, allowAdult = false) {
   }
 }
 
+// ---- MyAnimeList (optional account link) -----------------------------------------------------------------------------
+// MyAnimeList's API does not allow calls straight from a web view (no CORS), so the app calls these routes instead.
+// The Worker only passes the person's own token through to MyAnimeList for the few fixed requests below. It stores
+// nothing, logs nothing, never forwards a token to any other host, and is not a general proxy: paths, query fields
+// and body fields are all fixed lists.
+const MAL_API = "https://api.myanimelist.net/v2";
+const MAL_TOKEN_URL = "https://myanimelist.net/v1/oauth2/token";
+const MAL_REDIRECT_URI = "tokyomangalab://mal-auth";
+const MAL_LIST_FIELDS = "list_status,alternative_titles,start_date,synopsis,genres,num_chapters,num_volumes,nsfw,media_type";
+const MAL_TITLE_FIELDS = "id,title,main_picture,alternative_titles,start_date,media_type,status,num_chapters,num_volumes,nsfw,my_list_status";
+const MAL_STATUSES = ["reading", "completed", "on_hold", "dropped", "plan_to_read"];
+const MAL_PAGE_SIZE = 100;
+const MAL_MAX_OFFSET = 20000;
+const noStoreHeaders = { "Cache-Control": "no-store" };
+
+const malTokenShape = /^[A-Za-z0-9._~+\/=-]{20,4096}$/;
+const malIdShape = /^\d{1,9}$/;
+const malDateShape = /^\d{4}-\d{2}-\d{2}$/;
+
+function malBearer(request) {
+  const header = request.headers.get("Authorization") || "";
+  const token = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+  return malTokenShape.test(token) ? token : "";
+}
+
+async function callMal(url, options = {}) {
+  const first = await callMalOnce(url, options).catch(error => ({ failed: error }));
+  const transient = first.failed || first.status === 502 || first.status === 503 || first.status === 504;
+  // Reads are repeated once after a dropped connection or a gateway error. Writes are not repeated here; the app queues them.
+  if (!transient || (options.method && options.method !== "GET")) { if (first.failed) throw first.failed; return first; }
+  await new Promise(resolve => setTimeout(resolve, 350));
+  return callMalOnce(url, options);
+}
+
+async function callMalOnce(url, { method = "GET", token = "", form = null } = {}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  try {
+    const headers = { Accept: "application/json", "User-Agent": "TokyoMangaLab/1.2 (optional list sync)" };
+    if (token) headers.Authorization = `Bearer ${token}`;
+    const init = { method, headers, signal: controller.signal, cf: { cacheTtl: 0, cacheEverything: false } };
+    if (form) { headers["Content-Type"] = "application/x-www-form-urlencoded"; init.body = new URLSearchParams(form).toString(); }
+    const response = await fetch(url, init);
+    let body = null;
+    try { body = await response.json(); } catch { body = null; }
+    return { status: response.status, ok: response.ok, body };
+  } finally { clearTimeout(timeout); }
+}
+
+function malFailure(result, origin, { auth = false } = {}) {
+  const status = result.status;
+  if (status === 429) return apiError("RATE_LIMITED", "MyAnimeList is rate-limiting requests. Please retry shortly.", origin, 429, noStoreHeaders);
+  if (status === 401 || status === 403) return apiError(auth ? "MAL_AUTH_FAILED" : "UNAUTHORIZED", auth ? "MyAnimeList did not accept that sign-in. Try connecting again." : "MyAnimeList sign-in expired or was revoked. Connect again.", origin, 401, noStoreHeaders);
+  if (status === 400 && auth) return apiError("MAL_AUTH_FAILED", "MyAnimeList did not accept that sign-in. Check the client ID and try connecting again.", origin, 400, noStoreHeaders);
+  if (status === 404) return apiError("NOT_FOUND", "MyAnimeList does not know that title.", origin, 404, noStoreHeaders);
+  if (status === 400) return apiError("INVALID_REQUEST", "MyAnimeList did not accept that request.", origin, 400, noStoreHeaders);
+  return apiError("UPSTREAM_UNAVAILABLE", "Could not reach MyAnimeList. Try again shortly.", origin, 502, noStoreHeaders);
+}
+
+async function readJsonBody(request, maxBytes = 4096) {
+  const text = await request.text();
+  if (text.length > maxBytes) return null;
+  try { const value = JSON.parse(text); return value && typeof value === "object" && !Array.isArray(value) ? value : null; } catch { return null; }
+}
+
+async function handleMalToken(request, origin) {
+  if (request.method !== "POST") return apiError("METHOD_NOT_ALLOWED", "Use POST.", origin, 405, { ...noStoreHeaders, Allow: "POST, OPTIONS" });
+  const body = await readJsonBody(request);
+  if (!body) return apiError("INVALID_REQUEST", "Send a small JSON body.", origin, 400, noStoreHeaders);
+  const clientId = String(body.client_id || "");
+  if (!/^[A-Za-z0-9]{16,64}$/.test(clientId)) return apiError("INVALID_REQUEST", "The MyAnimeList client ID looks wrong. It is about 32 letters and numbers.", origin, 400, noStoreHeaders);
+  const grant = String(body.grant_type || "");
+  const form = { client_id: clientId, grant_type: grant };
+  if (grant === "authorization_code") {
+    const code = String(body.code || "");
+    const verifier = String(body.code_verifier || "");
+    if (!/^[A-Za-z0-9._~-]{10,2048}$/.test(code) || !/^[A-Za-z0-9._~-]{43,128}$/.test(verifier)) return apiError("INVALID_REQUEST", "The sign-in code is not valid.", origin, 400, noStoreHeaders);
+    form.code = code; form.code_verifier = verifier; form.redirect_uri = MAL_REDIRECT_URI;
+  } else if (grant === "refresh_token") {
+    const refresh = String(body.refresh_token || "");
+    if (!malTokenShape.test(refresh)) return apiError("INVALID_REQUEST", "The refresh token is not valid.", origin, 400, noStoreHeaders);
+    form.refresh_token = refresh;
+  } else return apiError("INVALID_REQUEST", "Unsupported grant type.", origin, 400, noStoreHeaders);
+  try {
+    const result = await callMal(MAL_TOKEN_URL, { method: "POST", form });
+    if (!result.ok || !result.body?.access_token) return malFailure(result.ok ? { status: 502 } : result, origin, { auth: true });
+    const { access_token, refresh_token, expires_in, token_type } = result.body;
+    return json({ data: { access_token, refresh_token: refresh_token || null, expires_in: Number(expires_in) || 3600, token_type: token_type || "Bearer" }, meta: { apiVersion: "1", requestId: requestId() } }, 200, origin, noStoreHeaders);
+  } catch { return apiError("UPSTREAM_UNAVAILABLE", "Could not reach MyAnimeList. Try again shortly.", origin, 502, noStoreHeaders); }
+}
+
+// A title is only passed on when it is safe, or when the adult preference is on (Android app only, like every other route).
+const malTitleAllowed = (node, allowAdult) => allowAdult || !node?.nsfw || node.nsfw === "white";
+
+async function handleMalApi(url, request, origin) {
+  const token = malBearer(request);
+  if (!token) return apiError("UNAUTHORIZED", "Connect your MyAnimeList account first.", origin, 401, noStoreHeaders);
+  const allowAdult = adultRequested(url, origin);
+  const path = url.pathname.replace(/^\/api\/v1\/mal/, "");
+  try {
+    if (path === "/me" && request.method === "GET") {
+      const result = await callMal(`${MAL_API}/users/@me?fields=anime_statistics`, { token });
+      if (!result.ok) return malFailure(result, origin);
+      return json({ data: result.body, meta: { apiVersion: "1", requestId: requestId(), source: "myanimelist" } }, 200, origin, noStoreHeaders);
+    }
+    if (path === "/list" && request.method === "GET") {
+      const offset = Math.min(MAL_MAX_OFFSET, Math.max(0, Number.parseInt(url.searchParams.get("offset") || "0", 10) || 0));
+      const api = new URL(`${MAL_API}/users/@me/mangalist`);
+      api.searchParams.set("fields", MAL_LIST_FIELDS);
+      api.searchParams.set("limit", String(MAL_PAGE_SIZE));
+      api.searchParams.set("offset", String(offset));
+      api.searchParams.set("nsfw", allowAdult ? "true" : "false");
+      api.searchParams.set("sort", "list_updated_at");
+      const result = await callMal(api.toString(), { token });
+      if (!result.ok) return malFailure(result, origin);
+      const rows = Array.isArray(result.body?.data) ? result.body.data : [];
+      const data = rows.filter(row => malTitleAllowed(row?.node, allowAdult));
+      return json({ data, hidden: rows.length - data.length, hasNext: Boolean(result.body?.paging?.next), nextOffset: offset + MAL_PAGE_SIZE, meta: { apiVersion: "1", requestId: requestId(), source: "myanimelist" } }, 200, origin, noStoreHeaders);
+    }
+    if (path === "/search" && request.method === "GET") {
+      const q = (url.searchParams.get("q") || "").replace(/\s+/g, " ").trim().slice(0, MAX_QUERY_LENGTH);
+      if (q.length < 3) return json({ data: [], meta: { apiVersion: "1", requestId: requestId(), source: "myanimelist" } }, 200, origin, noStoreHeaders);
+      const api = new URL(`${MAL_API}/manga`);
+      api.searchParams.set("q", q); api.searchParams.set("limit", "10"); api.searchParams.set("nsfw", allowAdult ? "true" : "false");
+      api.searchParams.set("fields", "id,title,main_picture,alternative_titles,start_date,media_type,num_chapters,nsfw");
+      const result = await callMal(api.toString(), { token });
+      if (!result.ok) return malFailure(result, origin);
+      const data = (Array.isArray(result.body?.data) ? result.body.data : []).map(row => row?.node).filter(node => node && malTitleAllowed(node, allowAdult));
+      return json({ data, meta: { apiVersion: "1", requestId: requestId(), source: "myanimelist" } }, 200, origin, noStoreHeaders);
+    }
+    const titleMatch = path.match(/^\/manga\/(\d{1,9})(\/status)?$/);
+    if (titleMatch) {
+      const id = titleMatch[1];
+      if (!titleMatch[2] && request.method === "GET") {
+        const result = await callMal(`${MAL_API}/manga/${id}?fields=${encodeURIComponent(MAL_TITLE_FIELDS)}`, { token });
+        if (!result.ok) return malFailure(result, origin);
+        if (!malTitleAllowed(result.body, allowAdult)) return apiError("TITLE_UNAVAILABLE", "This title is unavailable in the current catalogue mode.", origin, 404, noStoreHeaders);
+        return json({ data: result.body, meta: { apiVersion: "1", requestId: requestId(), source: "myanimelist" } }, 200, origin, noStoreHeaders);
+      }
+      if (titleMatch[2] && request.method === "PATCH") {
+        const body = await readJsonBody(request);
+        if (!body) return apiError("INVALID_REQUEST", "Send a small JSON body.", origin, 400, noStoreHeaders);
+        const form = {};
+        if (body.status !== undefined) { if (!MAL_STATUSES.includes(body.status)) return apiError("INVALID_REQUEST", "Unknown status.", origin, 400, noStoreHeaders); form.status = body.status; }
+        for (const [key, max] of [["score", 10], ["num_chapters_read", 100000], ["num_volumes_read", 100000]]) {
+          if (body[key] === undefined) continue;
+          const value = body[key];
+          if (!Number.isInteger(value) || value < 0 || value > max) return apiError("INVALID_REQUEST", `${key} is not valid.`, origin, 400, noStoreHeaders);
+          form[key] = String(value);
+        }
+        if (body.is_rereading !== undefined) { if (typeof body.is_rereading !== "boolean") return apiError("INVALID_REQUEST", "is_rereading is not valid.", origin, 400, noStoreHeaders); form.is_rereading = body.is_rereading ? "true" : "false"; }
+        for (const key of ["start_date", "finish_date"]) {
+          if (body[key] === undefined) continue;
+          if (body[key] !== "" && !malDateShape.test(String(body[key]))) return apiError("INVALID_REQUEST", `${key} is not valid.`, origin, 400, noStoreHeaders);
+          form[key] = String(body[key]);
+        }
+        if (!Object.keys(form).length) return apiError("INVALID_REQUEST", "Nothing to change.", origin, 400, noStoreHeaders);
+        const result = await callMal(`${MAL_API}/manga/${id}/my_list_status`, { method: "PATCH", token, form });
+        if (!result.ok) return malFailure(result, origin);
+        return json({ data: result.body, meta: { apiVersion: "1", requestId: requestId(), source: "myanimelist" } }, 200, origin, noStoreHeaders);
+      }
+    }
+    return apiError("NOT_FOUND", "API route not found.", origin, 404, noStoreHeaders);
+  } catch { return apiError("UPSTREAM_UNAVAILABLE", "Could not reach MyAnimeList. Try again shortly.", origin, 502, noStoreHeaders); }
+}
+
 export default {
   async fetch(request) {
     const url = new URL(request.url);
@@ -642,7 +847,8 @@ export default {
       return new Response(null, { status: 204, headers: corsHeaders(origin) });
     }
     if (!isAllowedOrigin(origin)) return json({ error: "Origin not allowed." }, 403, origin);
-    if (request.method !== "GET") return json({ error: "Only GET requests are supported." }, 405, origin, { Allow: "GET, OPTIONS" });
+    const isMal = url.pathname.startsWith("/api/v1/mal/");
+    if (request.method !== "GET" && !isMal) return json({ error: "Only GET requests are supported." }, 405, origin, { Allow: "GET, OPTIONS" });
 
     if (url.pathname !== "/health") {
       const wait = retryAfterSeconds(request);
@@ -663,6 +869,8 @@ export default {
     if (url.pathname === "/api/v1/tags") return handleV1Tags(url, origin);
     if (url.pathname === "/api/v1/latest") return handleV1Latest(url, origin);
     if (url.pathname === "/api/v1/updates") return handleV1Updates(url, origin);
+    if (url.pathname === "/api/v1/mal/token") return handleMalToken(request, origin);
+    if (isMal) return handleMalApi(url, request, origin);
 
     const pagesMatch = url.pathname.match(/^\/api\/v1\/chapters\/([^/]+)\/pages$/);
     if (pagesMatch) {

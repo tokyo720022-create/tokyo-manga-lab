@@ -186,3 +186,24 @@
 - Local database upgraded to version 4 (new `updateWatch` and `chapterUpdates` stores; existing data is kept).
 - Fixes: browser tests no longer break on the page's security policy (`wait_for_function` calls now use the function form, which fixed the `reader_e2e` failure); `package-lock.json` version matched to the app; the planned "notifications" and "auto-download" entries are removed from Coming later.
 - Tests: new unit tests for the check rules, checker, controller and add-on files; new browser suite `updates_e2e.py`. Not verified on a real phone or live MangaDex.
+
+## 1.2.0 - MyAnimeList (optional account link)
+- **Sign in with MyAnimeList** (Android app, optional) next to AniList: import your manga list (first sign-in imports only and sends nothing back), keep statuses in step both ways with the same rules as AniList (newer change wins, never deletes, sending back is opt-in), and update chapters read after you read. Needs your own free client ID (App Type "other", redirect `tokyomangalab://mal-auth`); see `docs/MYANIMELIST.md`.
+- **Tracking panel** now works for both services: status, chapters, score (0-10), dates, find and link a title. With both connected it has a tab per service. Reading a chapter updates every connected service.
+- **Profile**: AniList stays the default. When both are connected, **Settings > Account and sync > Profile shows** switches it to MyAnimeList. MyAnimeList's API has no banner and no follower counts, so its Profile has a plain banner, no followers, and manga totals worked out from your synced list.
+- **MyAnimeList-only titles** can be linked to MangaDex for chapters, matched only by the MyAnimeList id MangaDex itself lists or by the title you pick. MangaDex titles that list a MyAnimeList id now remember it, so sync and tracking match them exactly.
+- **Library** cards show an `MAL · ch. N` tag beside the AniList one. Covers from MyAnimeList's image host are allowed.
+- **Worker (needs a redeploy):** new `POST /api/v1/mal/token` and `/api/v1/mal/{me,list,search,manga/{id},manga/{id}/status}`. They pass your own token to MyAnimeList for fixed requests only, store and log nothing, and never accept a redirect address from the request. Every other route is still GET only. Single-file copy: `tokyo-manga-lab-api2-worker.js`.
+- **Android build:** `scripts/android-customize.sh` also registers `tokyomangalab://mal-auth`. Build a new APK once after applying this.
+- No database upgrade (still version 4). Tokens are kept in `accountLinks`, never in backups.
+- Tests: unit tests for sign-in, mapping, client, profile, Worker routes and linking; new browser suite `mal_e2e.py` (18 suites in all). Not verified against the real MyAnimeList or on a phone.
+
+## 1.2.1 - Stability
+- **APK updates install over the old app again.** The build now stops with a clear message when the saved signing key (`ANDROID_DEBUG_KEYSTORE_BASE64`) is missing, instead of quietly signing with a random key (the cause of "App not installed as package conflicts with an existing package"). Every build prints its signing fingerprint and warns when it is not the Tokyo Manga Lab key. Recovery steps are in `docs/SIGNING.md`.
+- **MyAnimeList sign-in is built in.** The app ships with its own client ID, so nobody has to create one. A client ID typed in Settings still takes priority.
+- **Quiet retries** for AniList and MyAnimeList (dropped connection, timeouts, gateway errors, short rate limits), shared in `src/shared/retry.js`. Sign-in code exchange is never repeated.
+- **Queued changes** (chapter progress, status, scores) for both services are sent on start, when the app comes to the front, and every 5 minutes. A change that was told to wait (rate limit, service down) is not sent early, except that coming back online clears the wait.
+- **Worker:** the last good MangaDex answer is kept for a day and served when MangaDex is down, slow or rate-limiting (never for "not found", never for page images). MyAnimeList reads are repeated once after a gateway error; saves are not.
+- **Settings > Sources and connection > Test all connections** checks MangaDex, AniList and MyAnimeList and explains problems in plain words.
+- Tests: retry layer, Worker fallbacks, connection check, queued-change sending, built-in client ID.
+

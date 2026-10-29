@@ -1,4 +1,6 @@
-# Linking AniList titles to MangaDex chapters
+# Linking AniList (and MyAnimeList) titles to MangaDex chapters
+
+> Since 1.2.0 the same flow serves MyAnimeList-only titles (`sourceId: "mal"`): the automatic match uses the `malId` MangaDex lists instead of `anilistId`, the stored link row records `linkedMalId` and kind `mal-id`, and everything else is identical. See `docs/MYANIMELIST.md`.
 
 AniList has no chapters. A title that exists only on AniList (`sourceId: "anilist"`) therefore needs a MangaDex record
 before the chapter list and the reader can work. Since v0.9.0 the title sheet does this in two steps.

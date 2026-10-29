@@ -1,9 +1,9 @@
-// Cover image helpers. Covers only load from hosts we expect (MangaDex and AniList), over https. Anything else
+// Cover image helpers. Covers only load from hosts we expect (MangaDex, AniList and MyAnimeList), over https. Anything else
 // (for example a cover URL that came in through an imported backup) is treated as "no cover" and shows the placeholder.
 const ANILIST_HOST = /^s\d+\.anilist\.co$/;
 
 export function isAllowedCoverHost(hostname) {
-  return hostname === 'uploads.mangadex.org' || ANILIST_HOST.test(hostname);
+  return hostname === 'uploads.mangadex.org' || hostname === 'cdn.myanimelist.net' || ANILIST_HOST.test(hostname);
 }
 
 export function safeCoverUrl(value) {

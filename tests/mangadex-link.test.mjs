@@ -120,3 +120,27 @@ test('AniList metadata is preserved; MangaDex only fills blanks', () => {
   assert.equal(aniItem.description, 'AniList synopsis', 'the stored item is not mutated');
   assert.equal(withFallbackMetadata(aniItem, null), aniItem);
 });
+
+// ---- MyAnimeList-only titles link to MangaDex the same way, by the MyAnimeList id MangaDex lists ----
+import { isLinkableTrackerItem, trackerIdKey } from '../src/features/linking/mangadex-link.js';
+
+test('MyAnimeList-only titles can be linked, matched only by MangaDex\'s own MyAnimeList id', async () => {
+  const malItem = { id: 'c1', sourceId: 'mal', externalId: '13', title: 'Monster', alternateTitles: [] };
+  assert.ok(isLinkableTrackerItem(malItem));
+  assert.ok(isLinkableTrackerItem({ id: 'c2', sourceId: 'anilist', externalId: '5' }));
+  assert.ok(!isLinkableTrackerItem({ id: 'c3', sourceId: 'mangadex', externalId: '5' }));
+  assert.equal(trackerIdKey(malItem), 'malId');
+  assert.equal(trackerIdKey({ sourceId: 'anilist' }), 'anilistId');
+  const uuid = n => `${String(n).padStart(8, '0')}-1111-4111-8111-111111111111`;
+  const search = async () => [{ externalId: uuid(1), title: 'Monster', anilistId: '13', malId: null }, { externalId: uuid(2), title: 'Monster (other)', anilistId: null, malId: '13' }];
+  const result = await findMangaDexMatch(malItem, { search });
+  assert.equal(result.status, 'exact', 'the candidate that lists MyAnimeList #13 is the exact match');
+  assert.equal(result.candidate.externalId, uuid(2), 'an AniList id equal to the MyAnimeList number is not a match');
+  const none = await findMangaDexMatch({ ...malItem, externalId: '99' }, { search });
+  assert.equal(none.status, 'candidates');
+  assert.deepEqual(none.candidates.map(candidate => candidate.idStatus).sort(), ['none', 'other']);
+  const row = buildLinkRow(malItem, result.candidate, 'mal-id');
+  assert.equal(row.linkedMalId, '13');
+  assert.equal(row.linkedAnilistId, undefined);
+  assert.throws(() => buildLinkRow(malItem, result.candidate, 'nonsense'), /Unknown link kind/);
+});

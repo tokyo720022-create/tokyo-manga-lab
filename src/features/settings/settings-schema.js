@@ -128,7 +128,7 @@ export const SETTINGS_CATEGORIES = Object.freeze([
     ]
   },
   {
-    id: 'account', section: 'connections', title: 'Account and sync', icon: 'cloud', summary: 'AniList and tracking', valueFrom: 'anilistStatus',
+    id: 'account', section: 'connections', title: 'Account and sync', icon: 'cloud', summary: 'AniList, MyAnimeList and tracking', valueFrom: 'anilistStatus',
     groups: [
       { id: 'anilist', title: 'AniList', items: [
         { type: 'info', title: 'Account', valueFrom: 'anilistStatus' },
@@ -140,16 +140,30 @@ export const SETTINGS_CATEGORIES = Object.freeze([
         { type: 'action', action: 'anilist-apps', title: 'Manage access on AniList', description: 'Revoke this app completely on anilist.co.', button: 'Open', when: 'anilistConnected' },
         { type: 'action', action: 'anilist-disconnect', title: 'Sign out', description: 'Removes the sign-in from this device only.', button: 'Sign out', danger: true, when: 'anilistConnected' }
       ] },
+      { id: 'mal', title: 'MyAnimeList', items: [
+        { type: 'info', title: 'Account', valueFrom: 'malStatus' },
+        { type: 'action', action: 'mal-connect', title: 'Sign in with MyAnimeList', description: 'Opens MyAnimeList to approve access. Nothing to set up.', button: 'Sign in', when: 'malDisconnected' },
+        { type: 'action', action: 'mal-register', title: 'Create a MyAnimeList account', description: 'Free and optional. Opens myanimelist.net.', button: 'Register', when: 'malDisconnected' },
+        { type: 'toggle', key: 'malPushEnabled', title: 'Send changes to MyAnimeList', description: 'Status changes you make here are saved there too. Nothing is ever deleted.', when: 'malConnected' },
+        { type: 'action', action: 'mal-sync', title: 'Sync now', description: 'Bring your MyAnimeList manga list in.', button: 'Sync', resultId: 'malResult', when: 'malConnected' },
+        { type: 'info', title: 'Last sync', valueFrom: 'malLastSync', when: 'malConnected' },
+        { type: 'action', action: 'mal-apps', title: 'MyAnimeList app settings', description: 'Opens myanimelist.net/apiconfig, where your client ID is managed.', button: 'Open', when: 'malConnected' },
+        { type: 'action', action: 'mal-disconnect', title: 'Sign out', description: 'Removes the sign-in from this device only.', button: 'Sign out', danger: true, when: 'malConnected' }
+      ] },
+      { id: 'profile-source', title: 'Profile', items: [
+        { type: 'select', key: 'profileSource', title: 'Profile shows', description: 'Which account supplies the name, picture and banner on your Profile when both are connected. MyAnimeList has no banner.', options: [['anilist', 'AniList'], ['mal', 'MyAnimeList']], when: 'bothConnected' }
+      ] },
       { id: 'tracking', title: 'Tracking', items: [
-        { type: 'toggle', key: 'trackerAutoUpdate', title: 'Update progress after reading', description: 'Updates AniList when you finish a chapter. Waits on this device if offline. Progress only goes up.' },
-        { type: 'select', key: 'trackerMarkRead', title: 'When marked as read', description: 'Update AniList when you mark chapters read yourself.', options: [['always', 'Always'], ['ask', 'Ask each time'], ['never', 'Never']] }
+        { type: 'toggle', key: 'trackerAutoUpdate', title: 'Update progress after reading', description: 'Updates AniList and MyAnimeList when you finish a chapter. Waits if offline. Progress only goes up.' },
+        { type: 'select', key: 'trackerMarkRead', title: 'When marked as read', description: 'Update your tracker when you mark chapters read yourself.', options: [['always', 'Always'], ['ask', 'Ask each time'], ['never', 'Never']] }
       ] },
       { id: 'advanced', title: 'Advanced sign-in options', collapsed: true, items: [
         { type: 'action', action: 'anilist-paste-token', title: 'Paste a token instead', description: 'Use this if sign-in does not return to the app.', button: 'Paste', when: 'anilistDisconnected' },
+        { type: 'text', key: 'malClientId', title: 'Use my own client ID', description: 'Optional. Leave empty to use the built-in one. Never paste a Client Secret.', inputMode: 'text', placeholder: 'Built-in ID in use', when: 'malDisconnected' },
         { type: 'text', key: 'anilistClientId', title: 'Use my own AniList app ID', description: 'Optional. Create a free app at anilist.co/settings/developer with redirect URL tokyomangalab://anilist-auth, then paste its number. Leave empty to use the built-in app.', inputMode: 'numeric', placeholder: 'App ID', when: 'anilistDisconnected' }
       ] },
       { id: 'later', title: 'Later', items: [
-        { type: 'planned', id: 'more-trackers', title: 'More trackers', description: 'MyAnimeList, Kitsu, MangaUpdates and others.' },
+        { type: 'planned', id: 'more-trackers', title: 'More trackers', description: 'Kitsu, MangaUpdates and others.' },
         { type: 'planned', id: 'sign-in', title: 'Tokyo Manga Lab account', description: 'Sync without AniList and apply as a creator.' },
         { type: 'planned', id: 'profile-details', title: 'Profile details', description: 'Name, avatar and bio.' },
         { type: 'planned', id: 'cloud-sync', title: 'Cloud sync', description: 'Keep library and progress identical on every device.' }
@@ -166,7 +180,8 @@ export const SETTINGS_CATEGORIES = Object.freeze([
       ] },
       { id: 'connection', title: 'Connection', items: [
         { type: 'info', title: 'API address', value: API_BASE_URL },
-        { type: 'action', action: 'check-api', title: 'Test connection', description: 'Check that the catalogue API is reachable.', button: 'Test', resultId: 'apiTestResult' }
+        { type: 'action', action: 'check-api', title: 'Test connection', description: 'Check that the catalogue API is reachable.', button: 'Test', resultId: 'apiTestResult' },
+        { type: 'action', action: 'check-connections', title: 'Test all connections', description: 'Checks MangaDex, AniList and MyAnimeList and says what to do if one is down.', button: 'Test', resultId: 'connectionsResult' }
       ] }
     ]
   },
@@ -219,8 +234,8 @@ export function findCategory(id) {
   return SETTINGS_CATEGORIES.find(category => category.id === id) || null;
 }
 
-export const SETTING_CONDITIONS = Object.freeze(['anilistConnected', 'anilistDisconnected', 'nativeAlerts', 'noNativeAlerts']);
-export const DYNAMIC_VALUES = Object.freeze(['anilistStatus', 'anilistLastSync', 'ratings', 'downloadUsage', 'updateStatus', 'alertsStatus']);
+export const SETTING_CONDITIONS = Object.freeze(['anilistConnected', 'anilistDisconnected', 'malConnected', 'malDisconnected', 'bothConnected', 'nativeAlerts', 'noNativeAlerts']);
+export const DYNAMIC_VALUES = Object.freeze(['anilistStatus', 'anilistLastSync', 'malStatus', 'malLastSync', 'ratings', 'downloadUsage', 'updateStatus', 'alertsStatus']);
 export const CATEGORY_VALUES = Object.freeze(['theme', 'readerMode', 'language', 'anilistStatus']);
 
 export function allSettingKeys() {
