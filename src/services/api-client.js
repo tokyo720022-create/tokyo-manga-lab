@@ -17,6 +17,11 @@ export class ApiError extends Error {
 // The public web build can never ask for them, and the Worker refuses browser origins as well.
 let adultAllowed = false;
 export function configureAdult(enabled) { adultAllowed = Boolean(enabled) && isNativeApp(); }
+// "Hide titles with no chapters": search asks MangaDex to skip titles that have nothing to read in the chapter language.
+let chapterFilter = { hide: false, language: '' };
+export function configureChapterFilter({ hide = false, language = '' } = {}) {
+  chapterFilter = { hide: Boolean(hide), language: /^[a-z]{2,3}$/.test(String(language)) ? String(language) : '' };
+}
 export const adultActive = () => adultAllowed;
 
 // Connection state, for the status pill. 'online' after any good answer, 'offline' after a request that
@@ -103,7 +108,7 @@ async function getJsonOnce(path, params = {}, { signal } = {}) {
 export const apiClient = {
   health: ({ signal } = {}) => getJson('health', {}, { signal, retries: 1 }),
   // Keep search on the proven legacy route until the versioned endpoints are deployed.
-  mangaSearch: ({ query = '', page = 1, genres = [], status = '', sort = '', signal } = {}) => getJson('manga', { q: String(query).trim().slice(0, 100), page: Math.max(1, Math.min(20, Number(page) || 1)), genre: (Array.isArray(genres) ? genres : []).slice(0, 6).join(','), status, sort }, { signal }),
+  mangaSearch: ({ query = '', page = 1, genres = [], status = '', sort = '', signal } = {}) => getJson('manga', { q: String(query).trim().slice(0, 100), page: Math.max(1, Math.min(20, Number(page) || 1)), genre: (Array.isArray(genres) ? genres : []).slice(0, 6).join(','), status, sort, hasChapters: chapterFilter.hide ? '1' : undefined, lang: chapterFilter.hide ? chapterFilter.language : undefined }, { signal }),
   mangaLatest: ({ page = 1, signal } = {}) => getJson('api/v1/latest', { page: Math.max(1, Math.min(20, Number(page) || 1)) }, { signal }),
   mangaUpdates: (ids, { signal } = {}) => getJson('api/v1/updates', { ids: (Array.isArray(ids) ? ids : []).slice(0, 50).join(',') }, { signal, retries: 1 }),
   mangaTags: ({ signal } = {}) => getJson('api/v1/tags', {}, { signal }),

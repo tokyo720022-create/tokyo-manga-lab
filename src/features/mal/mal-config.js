@@ -7,8 +7,10 @@ export const MAL_REDIRECT_URI = 'tokyomangalab://mal-auth';
 export const MAL_REDIRECT_PROTOCOL = 'tokyomangalab:';
 export const MAL_REDIRECT_HOST = 'mal-auth';
 
-// Empty on purpose: a client ID belongs to whoever registered the app. Put yours in Settings > Account and sync.
-export const DEFAULT_MAL_CLIENT_ID = '';
+// The app's own MyAnimeList client ID (app "Tokyo Manga Lab", type android, redirect tokyomangalab://mal-auth), so people can sign in
+// without creating anything. A client ID is public by design and no client secret is used (PKCE). A person can still set
+// their own in Settings > Account and sync > Advanced, and that one wins.
+export const DEFAULT_MAL_CLIENT_ID = 'f12c4b87e9aa18f53468de53d93344c9';
 
 export const MAL_REGISTER_URL = 'https://myanimelist.net/register.php';
 export const MAL_APPS_URL = 'https://myanimelist.net/apiconfig';

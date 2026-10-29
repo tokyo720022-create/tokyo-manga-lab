@@ -2,6 +2,11 @@ name: Build Android APK
 
 on:
   workflow_dispatch:
+    inputs:
+      allow_random_key:
+        description: "Build even without the saved signing key (the APK will NOT install over an older build)"
+        type: boolean
+        default: false
   push:
     tags: ["v*"]
 
@@ -74,8 +79,11 @@ jobs:
             mkdir -p ~/.android
             printf '%s' "$KEYSTORE_B64" | base64 -d > ~/.android/debug.keystore
             echo "Using the saved signing key, so this APK installs over older builds."
+          elif [ "${{ inputs.allow_random_key }}" = "true" ]; then
+            echo "::warning::Building with a random signing key because you asked for it. This APK will NOT install over an older build."
           else
-            echo "::warning::No ANDROID_DEBUG_KEYSTORE_BASE64 secret found. This APK gets a new random signing key, so Android will refuse to install it over an older build. See docs/SIGNING.md."
+            echo "::error::The secret ANDROID_DEBUG_KEYSTORE_BASE64 is missing, so this APK would get a random signing key and Android would refuse to install it over your current app (\"App not installed as package conflicts with an existing package\"). Add the secret (docs/SIGNING.md) and run again. To build anyway, run the workflow by hand and tick allow_random_key."
+            exit 1
           fi
 
       - name: Build debug APK
@@ -90,9 +98,21 @@ jobs:
           ls -lh dist
 
       - name: Show the signing fingerprint
+        env:
+          EXPECTED_SHA256: "5D:95:DD:98:36:04:94:58:F3:A7:A2:E3:F5:7A:AF:D0:22:5A:E8:45:4B:AB:D1:6D:15:F6:94:04:AE:29:2E:E2"
         run: |
-          echo "If this SHA-256 is the same as the previous build, the APK installs as an update."
-          keytool -printcert -jarfile dist/*.apk | grep -E "SHA256|Owner" || true
+          FP="$(keytool -printcert -jarfile dist/*.apk | grep -E "SHA256" | head -n 1 | sed 's/.*SHA256: *//')"
+          echo "APK signing fingerprint (SHA-256): $FP"
+          {
+            echo "### APK signing key"
+            echo ""
+            echo "SHA-256: \`$FP\`"
+            echo ""
+            echo "An APK installs over an older one only when this value is the same. It should stay the same on every build."
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$FP" != "$EXPECTED_SHA256" ]; then
+            echo "::warning::This APK is signed with a different key than the Tokyo Manga Lab key (expected ${EXPECTED_SHA256:0:23}...). If your phone already has a build signed with the expected key it will say 'package conflicts with an existing package'. See docs/SIGNING.md."
+          fi
 
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
@@ -102,12 +122,3 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
-      - name: Attach APK to GitHub Release (tag builds only)
-        if: startsWith(github.ref, 'refs/tags/v')
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "${GITHUB_REF_NAME}" dist/*.apk \
-            --title "Tokyo Manga Lab ${GITHUB_REF_NAME}" \
-            --notes "Debug-signed APK. Enable 'Install unknown apps' on Android to install." \
-            --prerelease

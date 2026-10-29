@@ -198,3 +198,20 @@
 - No database upgrade (still version 4). Tokens are kept in `accountLinks`, never in backups.
 - Tests: unit tests for sign-in, mapping, client, profile, Worker routes and linking; new browser suite `mal_e2e.py` (18 suites in all). Not verified against the real MyAnimeList or on a phone.
 
+## 1.2.1 - Stability
+- **APK updates install over the old app again.** The build now stops with a clear message when the saved signing key (`ANDROID_DEBUG_KEYSTORE_BASE64`) is missing, instead of quietly signing with a random key (the cause of "App not installed as package conflicts with an existing package"). Every build prints its signing fingerprint and warns when it is not the Tokyo Manga Lab key. Recovery steps are in `docs/SIGNING.md`.
+- **MyAnimeList sign-in is built in.** The app ships with its own client ID, so nobody has to create one. A client ID typed in Settings still takes priority.
+- **Quiet retries** for AniList and MyAnimeList (dropped connection, timeouts, gateway errors, short rate limits), shared in `src/shared/retry.js`. Sign-in code exchange is never repeated.
+- **Queued changes** (chapter progress, status, scores) for both services are sent on start, when the app comes to the front, and every 5 minutes. A change that was told to wait (rate limit, service down) is not sent early, except that coming back online clears the wait.
+- **Worker:** the last good MangaDex answer is kept for a day and served when MangaDex is down, slow or rate-limiting (never for "not found", never for page images). MyAnimeList reads are repeated once after a gateway error; saves are not.
+- **Settings > Sources and connection > Test all connections** checks MangaDex, AniList and MyAnimeList and explains problems in plain words.
+- Tests: retry layer, Worker fallbacks, connection check, queued-change sending, built-in client ID.
+
+## 1.3.0 - Titles with no chapters
+- **Search and Discover leave out titles that have no chapters** in your chapter language. The app asks MangaDex to do the filtering (`hasAvailableChapters` plus the language), so empty titles never fill result pages and page counts stay honest. New setting **Hide titles with no chapters** (Settings > Language and content, on by default).
+- **One tap to see them anyway:** Discover shows a line under the result count ("Titles with no chapters are hidden. Show them") and the same line flips back.
+- The title page says **"No chapters on MangaDex in <language>"** and points to the language picker and the MangaDex page, instead of a vague message.
+- Worker: new optional search parameters `hasChapters=1` and `lang=<code>` (`/api/v1/search` and legacy `/manga`). Without them nothing changes, so older app versions keep working. The extra lookup for safe-rated tagged titles is filtered the same way.
+- Missing chapters inside a title are not touched. Titles already in your library or imported from AniList / MyAnimeList are never hidden; they just show the clearer message.
+- Tests: Worker filter parameters (with and without, invalid language), browser test of the hidden/shown toggle.
+

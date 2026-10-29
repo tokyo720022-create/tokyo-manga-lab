@@ -17,14 +17,14 @@ Like AniList, it is optional. Nothing in the app waits for it.
 - **No manga totals.** Manga counts, chapters and volumes read, and the mean score are worked out from your synced list.
 - **No MangaDex links on its titles.** AniList lists MangaDex addresses, so imports can match MangaDex titles exactly; MyAnimeList does not. A MyAnimeList-only title is matched with MangaDex only when MangaDex itself lists that MyAnimeList id (it is recorded when you open the MangaDex title), or when you pick the MangaDex title yourself with **Find on MangaDex**. Names are never matched automatically.
 
-## Setting it up (one time)
-MyAnimeList only allows its normal sign-in with a client ID you create yourself, so the app has none built in.
-1. On myanimelist.net open **Profile > Account Settings > API** (myanimelist.net/apiconfig) and **Create ID**.
-2. App Type: **other**. Redirect URL: exactly `tokyomangalab://mal-auth`. Fill in the other required fields with your own details.
-3. Copy the **Client ID** (not the Client Secret) into Settings > Account and sync > Advanced sign-in options > **My MyAnimeList client ID**.
-4. Tap **Sign in with MyAnimeList** (Settings or Profile).
+## Setting it up
+Nothing to set up. The app ships with its own client ID (app "Tokyo Manga Lab", registered on myanimelist.net/apiconfig as App Type **android** with redirect `tokyomangalab://mal-auth`), so you only tap **Sign in with MyAnimeList** (Settings or Profile). A client ID is public by design, and no client secret is used or stored (PKCE).
 
-For the sign-in link to return to the app the Android project needs the `mal-auth` link registered. `scripts/android-customize.sh` adds it on every APK build, so build a new APK once after applying 1.2.0.
+Want to use your own app instead? Create one at myanimelist.net/apiconfig (redirect URL exactly `tokyomangalab://mal-auth`), then paste its **Client ID** (never the Client Secret) in Settings > Account and sync > Advanced sign-in options > **Use my own client ID**. Yours wins over the built-in one; clearing the field goes back to the built-in one.
+
+The built-in ID lives in `src/features/mal/mal-config.js` (`DEFAULT_MAL_CLIENT_ID`). If the MyAnimeList app is ever deleted or changed, update it there.
+
+For the sign-in link to return to the app the Android project needs the `mal-auth` link registered. `scripts/android-customize.sh` adds it on every APK build, so build a new APK once after applying 1.2.0 or newer.
 
 ## How sign-in works
 Authorization code with PKCE (MyAnimeList supports the `plain` method only). The app makes a random verifier and state, opens the MyAnimeList page, and accepts the returning link only if it arrives within 15 minutes of starting sign-in and carries the same state. The one-time code and verifier are exchanged for tokens through the Worker. The access token lasts about an hour and is renewed with the refresh token; MyAnimeList gives a new refresh token each time, so only one renewal runs at a time and its result is saved first. If a renewal is refused you are asked to connect again.
