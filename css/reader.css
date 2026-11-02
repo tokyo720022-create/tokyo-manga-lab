@@ -28,6 +28,19 @@ body[data-route="read"] .app-view { padding: 0; max-width: none; }
 .reader-stage[data-fit="height"]:not([data-mode="scroll"]) .reader-img { width: auto; height: 100%; max-height: 100%; }
 .reader-stage[data-fit="height"]:not([data-mode="scroll"]) .reader-slot { height: 100%; }
 .reader-stage[data-mode="scroll"] .reader-img { width: 100%; max-width: 900px; }
+/* Zoom: pages get wider (--zoom) and the stage's own scrolling pans them. touch-action keeps the browser from zooming the whole app. */
+.reader-stage { touch-action: pan-x pan-y; --zoom: 1; }
+.reader-stage[data-zoomed="true"] { align-items: flex-start; }
+/* Doubled class: has to beat the fit rules above, which carry more attribute selectors. */
+.reader-stage.reader-stage[data-zoomed="true"] .reader-slot { flex: none; margin-left: auto; margin-right: auto; width: calc(min(100%, 900px) * var(--zoom)); }
+.reader-stage.reader-stage[data-zoomed="true"] .reader-slot .reader-img { width: 100%; max-width: none; height: auto; max-height: none; }
+.reader-stage.reader-stage[data-zoomed="true"][data-fit="height"]:not([data-mode="scroll"]) .reader-slot { width: max-content; min-width: 100%; height: calc(100% * var(--zoom)); }
+.reader-stage.reader-stage[data-zoomed="true"][data-fit="height"]:not([data-mode="scroll"]) .reader-slot .reader-img { width: auto; height: 100%; }
+.reader-zoom-pill { position: absolute; right: 12px; bottom: calc(88px + env(safe-area-inset-bottom)); display: flex; gap: 6px; align-items: center; padding: 4px 4px 4px 14px; border-radius: 999px; background: #0d0b16ee; color: #f3f0fa; font-size: .8rem; font-variant-numeric: tabular-nums; box-shadow: 0 6px 24px #0008; }
+.reader-zoom-pill .button-subtle { min-height: 36px; padding: 0 14px; font-size: .78rem; }
+.reader-zoom-buttons { display: flex; align-items: center; gap: 8px; }
+.reader-zoom-buttons .button-subtle { min-width: 44px; min-height: 40px; font-size: 1.1rem; }
+.reader-zoom-label { min-width: 3.4em; text-align: center; font-variant-numeric: tabular-nums; }
 .reader-retry { position: absolute; inset: auto 16px 16px; display: grid; gap: 6px; justify-items: center; padding: 14px; border-radius: var(--radius-m, 14px); background: #14111fee; text-align: center; font-size: .8rem; color: #d6d0e6; }
 .reader-retry p { margin: 0; }
 .reader-retry small { color: #8f88a8; font-size: .68rem; overflow-wrap: anywhere; }

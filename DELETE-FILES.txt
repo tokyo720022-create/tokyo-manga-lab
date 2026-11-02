@@ -1,4 +1,6 @@
-# Files removed by the next 'Unzip and apply ZIP' run.
+# Files removed by the next 'Unzip and apply ZIP' run (needs the updated unzip-and-apply.yml, see docs/REPO-CLEANUP.md).
+# One path per line. Anything after a # is a note. A path ending in / removes that whole folder.
 mangadex-live.js   # old one-file prototype, no longer loaded by index.html
-docs/EXCEPTIONS.md   # replaced by docs/TAG-POLICY.md in 0.10.2
-tests/worker-exceptions.test.mjs   # replaced by tests/worker-tag-policy.test.mjs in 0.10.2
+Tokyo-Manga-Lab-v0.10.1-Exceptions.zip   # old release zip left in the repository root
+Tokyo-Manga-Lab-v0.11.0-Downloads.zip   # old release zip left in the repository root
+docs/Workflows/   # duplicate of docs/workflows (different capital letter)

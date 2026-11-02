@@ -86,13 +86,16 @@ export function trackingRowFromEntry({ mediaId, contentItemId, userId, entry, me
 
 // Sends everything waiting in the outbox. A row holds a library status (from the library) and/or a patch (from tracking:
 // chapters read, score, dates, status). Network trouble keeps rows queued and stops; nothing is lost.
-export async function flushOutbox({ fetchImpl, sleepMs = PUSH_SPACING_MS } = {}) {
+export async function flushOutbox({ fetchImpl, sleepMs = PUSH_SPACING_MS, ignoreWait = false } = {}) {
   const rows = (await getOutbox()).sort((a, b) => a.createdAt - b.createdAt);
   if (!rows.length) return { sent: 0, remaining: 0, applied: [] };
   const { account, client } = await activeClient(fetchImpl);
   let sent = 0;
   const applied = [];
   for (const row of rows) {
+    // A row that was told to wait (rate limit, service down) is left alone until that time has passed.
+    // (ignoreWait: the phone just came back online, so the reason for waiting is gone.)
+    if (!ignoreWait && row.retryAfter && row.retryAfter > Date.now()) continue;
     try {
       const patch = { ...(row.patch || {}) };
       if (row.autoRead) {

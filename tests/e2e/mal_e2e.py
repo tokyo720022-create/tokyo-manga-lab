@@ -95,10 +95,10 @@ with sync_playwright() as p:
 
     pg.goto(U + '#profile'); pg.wait_for_selector('.profile-page')
     ok('Connect MyAnimeList' in pg.inner_text('.profile-page'), 'the Profile offers MyAnimeList, optional')
-    ok(pg.locator('[data-action="mal-connect"]').count() == 0, 'no sign-in button without a client ID')
-    ok(pg.locator('a:has-text("Add client ID")').count() == 1, 'it points to where the client ID goes')
+    ok(pg.locator('[data-action="mal-connect"]').count() == 1, 'the sign-in button is there with the built-in client ID')
+    ok(pg.locator('a:has-text("Add client ID")').count() == 0, 'nothing asks the person to create a client ID')
 
-    # client ID in Settings (advanced)
+    # a client ID typed in Settings (advanced) wins over the built-in one
     pg.goto(U + '#settings/account'); pg.wait_for_selector('#set-malClientId', state='attached')
     pg.evaluate("() => document.querySelectorAll('details').forEach(d => { d.open = true; })")
     pg.fill('#set-malClientId', 'not valid!'); pg.dispatch_event('#set-malClientId', 'change'); pg.wait_for_timeout(300)

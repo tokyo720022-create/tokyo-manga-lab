@@ -17,6 +17,7 @@ import { APP_NAME, APP_VERSION, MANGADEX_URL, REPO_URL } from '../../shared/app-
 import { API_BASE_URL } from '../../services/api-client.js';
 import { THEME_OPTIONS } from '../theme/themes.js';
 import { AUTO_LIMIT_OPTIONS, INTERVAL_OPTIONS, SCOPE_OPTIONS } from '../updates/update-plan.js';
+import { LOCK_DELAYS } from '../privacy/privacy-lock.js';
 
 export const CHAPTER_LANGUAGES = Object.freeze([
   ['en', 'English'], ['es', 'Spanish'], ['fr', 'French'], ['de', 'German'], ['pt', 'Portuguese'], ['it', 'Italian'],
@@ -119,7 +120,8 @@ export const SETTINGS_CATEGORIES = Object.freeze([
     id: 'content', section: 'app', title: 'Language and content', icon: 'globe', summary: 'Language and ratings', valueFrom: 'language',
     groups: [
       { id: 'language', title: 'Language', items: [
-        { type: 'select', key: 'preferredLanguage', title: 'Chapter language', description: 'Language chapter lists open in.', options: CHAPTER_LANGUAGES }
+        { type: 'select', key: 'preferredLanguage', title: 'Chapter language', description: 'Language chapter lists open in.', options: CHAPTER_LANGUAGES },
+        { type: 'toggle', key: 'hideEmptyTitles', title: 'Hide titles with no chapters', description: 'Search skips titles MangaDex has no chapters for in your language.' }
       ] },
       { id: 'safety', title: 'Content safety', items: [
         { type: 'toggle', key: 'adultContentEnabled', title: 'Adult-content preference', badge: 'Android app', description: 'Off by default. A preference on this device, not age verification. Adds titles rated erotica or pornographic.' },
@@ -142,7 +144,7 @@ export const SETTINGS_CATEGORIES = Object.freeze([
       ] },
       { id: 'mal', title: 'MyAnimeList', items: [
         { type: 'info', title: 'Account', valueFrom: 'malStatus' },
-        { type: 'action', action: 'mal-connect', title: 'Sign in with MyAnimeList', description: 'Opens MyAnimeList to approve access. Needs your own client ID (see Advanced sign-in options).', button: 'Sign in', when: 'malDisconnected' },
+        { type: 'action', action: 'mal-connect', title: 'Sign in with MyAnimeList', description: 'Opens MyAnimeList to approve access. Nothing to set up.', button: 'Sign in', when: 'malDisconnected' },
         { type: 'action', action: 'mal-register', title: 'Create a MyAnimeList account', description: 'Free and optional. Opens myanimelist.net.', button: 'Register', when: 'malDisconnected' },
         { type: 'toggle', key: 'malPushEnabled', title: 'Send changes to MyAnimeList', description: 'Status changes you make here are saved there too. Nothing is ever deleted.', when: 'malConnected' },
         { type: 'action', action: 'mal-sync', title: 'Sync now', description: 'Bring your MyAnimeList manga list in.', button: 'Sync', resultId: 'malResult', when: 'malConnected' },
@@ -159,7 +161,7 @@ export const SETTINGS_CATEGORIES = Object.freeze([
       ] },
       { id: 'advanced', title: 'Advanced sign-in options', collapsed: true, items: [
         { type: 'action', action: 'anilist-paste-token', title: 'Paste a token instead', description: 'Use this if sign-in does not return to the app.', button: 'Paste', when: 'anilistDisconnected' },
-        { type: 'text', key: 'malClientId', title: 'My MyAnimeList client ID', description: 'Required for MyAnimeList sign-in. Create a free app at myanimelist.net/apiconfig (App Type: other) with redirect URL tokyomangalab://mal-auth, then paste its Client ID. Never paste the Client Secret.', inputMode: 'text', placeholder: 'Client ID', when: 'malDisconnected' },
+        { type: 'text', key: 'malClientId', title: 'Use my own client ID', description: 'Optional. Leave empty to use the built-in one. Never paste a Client Secret.', inputMode: 'text', placeholder: 'Built-in ID in use', when: 'malDisconnected' },
         { type: 'text', key: 'anilistClientId', title: 'Use my own AniList app ID', description: 'Optional. Create a free app at anilist.co/settings/developer with redirect URL tokyomangalab://anilist-auth, then paste its number. Leave empty to use the built-in app.', inputMode: 'numeric', placeholder: 'App ID', when: 'anilistDisconnected' }
       ] },
       { id: 'later', title: 'Later', items: [
@@ -180,13 +182,22 @@ export const SETTINGS_CATEGORIES = Object.freeze([
       ] },
       { id: 'connection', title: 'Connection', items: [
         { type: 'info', title: 'API address', value: API_BASE_URL },
-        { type: 'action', action: 'check-api', title: 'Test connection', description: 'Check that the catalogue API is reachable.', button: 'Test', resultId: 'apiTestResult' }
+        { type: 'action', action: 'check-api', title: 'Test connection', description: 'Check that the catalogue API is reachable.', button: 'Test', resultId: 'apiTestResult' },
+        { type: 'action', action: 'check-connections', title: 'Test all connections', description: 'Checks MangaDex, AniList and MyAnimeList and says what to do if one is down.', button: 'Test', resultId: 'connectionsResult' }
       ] }
     ]
   },
   {
-    id: 'privacy', section: 'data', title: 'Privacy and data', icon: 'shield', summary: 'What is stored and where',
+    id: 'privacy', section: 'data', title: 'Privacy and data', icon: 'shield', summary: 'PIN lock and what is stored',
     groups: [
+      { id: 'screen-lock', title: 'Privacy screen', items: [
+        { type: 'info', title: 'PIN lock', valueFrom: 'pinStatus', description: 'Keeps the app closed to anyone who picks up your phone. It does not encrypt your library.' },
+        { type: 'action', action: 'privacy-pin-set', title: 'Turn on PIN lock', description: 'Asks for a PIN when you open the app or return after a while.', button: 'Set PIN', when: 'pinUnset' },
+        { type: 'select', key: 'privacyLockDelay', title: 'Ask for the PIN', description: 'How long you can be away before the PIN is needed again.', options: LOCK_DELAYS, when: 'pinSet' },
+        { type: 'action', action: 'privacy-pin-change', title: 'Change PIN', description: 'You enter the current PIN first.', button: 'Change', when: 'pinSet' },
+        { type: 'action', action: 'privacy-pin-remove', title: 'Turn off PIN lock', description: 'You enter the current PIN first.', button: 'Turn off', danger: true, when: 'pinSet' },
+        { type: 'toggle', key: 'privacyHideRecents', title: 'Hide the app in recent apps', description: 'Shows a blank preview there and blocks screenshots. Android app only.', when: 'nativeApp' }
+      ] },
       { id: 'storage', title: 'On this device', items: [
         { type: 'info', title: 'Where your data lives', value: 'This device only', description: 'No Tokyo Manga Lab account exists. AniList data is sent only if you connect and sync. Backups are files you save yourself.' },
         { type: 'planned', id: 'storage-usage', title: 'Storage usage', description: 'See how much space the app uses.' },
@@ -233,8 +244,8 @@ export function findCategory(id) {
   return SETTINGS_CATEGORIES.find(category => category.id === id) || null;
 }
 
-export const SETTING_CONDITIONS = Object.freeze(['anilistConnected', 'anilistDisconnected', 'malConnected', 'malDisconnected', 'bothConnected', 'nativeAlerts', 'noNativeAlerts']);
-export const DYNAMIC_VALUES = Object.freeze(['anilistStatus', 'anilistLastSync', 'malStatus', 'malLastSync', 'ratings', 'downloadUsage', 'updateStatus', 'alertsStatus']);
+export const SETTING_CONDITIONS = Object.freeze(['pinSet', 'pinUnset', 'nativeApp', 'anilistConnected', 'anilistDisconnected', 'malConnected', 'malDisconnected', 'bothConnected', 'nativeAlerts', 'noNativeAlerts']);
+export const DYNAMIC_VALUES = Object.freeze(['pinStatus', 'anilistStatus', 'anilistLastSync', 'malStatus', 'malLastSync', 'ratings', 'downloadUsage', 'updateStatus', 'alertsStatus']);
 export const CATEGORY_VALUES = Object.freeze(['theme', 'readerMode', 'language', 'anilistStatus']);
 
 export function allSettingKeys() {

@@ -4,6 +4,7 @@ import { buildPageUrls, clampPage, isChapterId, pagesExpired, pickQuality, shoul
 import { sendReport } from './reader-report.js';
 import { describeFailure, fetchImageNative, shortDetails } from './reader-native.js';
 import { loadChapterProgress, recordReadingSession, saveChapterProgress } from './reader-progress.js';
+import { MIN_ZOOM, clampZoom, doubleTapTarget, formatZoom, isDoubleTap, isZoomed, pinchZoom, scrollToKeepFocus, stepZoom } from './reader-zoom.js';
 import {
   AUTO_SPEEDS, autoSpeed, findNeighbor, formatStatusLine, getBatteryReader, markTipsSeen, setOrientation,
   setStatusBarVisible, setVolumeCapture, shareLink, tipsSeen, volumeAction
@@ -73,7 +74,8 @@ export function mountReader(host, { chapterId, context, settings, loadPages, onC
     uiVisible: true, sheetOpen: false, tips: false, destroyed: false,
     refreshing: null, lastRefresh: 0, lastErrorRefresh: 0, errorRefreshes: 0,
     startedAt: Date.now(), activeSeconds: 0, saveTimer: null, observer: null, loadObserver: null,
-    statusHidden: false, orientationLocked: false, clockTimer: 0, battery: null
+    statusHidden: false, orientationLocked: false, clockTimer: 0, battery: null,
+    zoom: MIN_ZOOM, lastTap: null, pinch: null
   };
   const auto = { on: false, paused: false, raf: 0, timer: 0, last: 0, carry: 0 };
   const controller = new AbortController();
@@ -288,6 +290,7 @@ export function mountReader(host, { chapterId, context, settings, loadPages, onC
         <div class="reader-group"><span class="reader-group-label">Image quality</span><div class="reader-segs">
           ${segment('data', 'Original', view.quality === 'data', 'set-quality')}${segment('data-saver', 'Data saver', view.quality === 'data-saver', 'set-quality')}
         </div></div>
+        <div class="reader-group"><span class="reader-group-label">Zoom</span><div class="reader-row"><div class="reader-row-text"><strong>Pinch or double-tap the page</strong><small>Or use the buttons.</small></div><div class="reader-zoom-buttons"><button class="button-subtle" data-reader="zoom-out" aria-label="Zoom out">−</button><span class="reader-zoom-label" aria-live="polite">${escapeHtml(formatZoom(view.zoom))}</span><button class="button-subtle" data-reader="zoom-in" aria-label="Zoom in">+</button></div></div></div>
         <div class="reader-group"><span class="reader-group-label">Auto read</span>
           <div class="reader-row"><div class="reader-row-text"><strong>${auto.on ? 'Auto read is on' : 'Scroll or turn pages for you'}</strong><small class="reader-speed-label">Speed: ${escapeHtml(speed.label)}</small></div><button class="button${auto.on ? '' : '-primary'}" data-reader="auto-toggle">${auto.on ? 'Stop' : 'Start'}</button></div>
           <input class="reader-range" type="range" min="1" max="${AUTO_SPEEDS.length}" step="1" value="${o.autoSpeed}" data-reader="auto-speed" aria-label="Auto read speed">
@@ -316,6 +319,7 @@ export function mountReader(host, { chapterId, context, settings, loadPages, onC
     const items = [
       'Tap the middle of the page to show or hide the bars.',
       paged ? `Tap the left or right edge to turn the page${view.mode === 'rtl' ? ' (the left edge goes forward in right-to-left mode)' : ''}.` : 'Scroll to read. Drag the slider to jump to a page.',
+      'Pinch to zoom, or double-tap the middle of the page. Reset brings the page back to fit. While zoomed in, taps do not turn the page.',
       'Tap the sliders button for reading mode, auto read, rotation and more.',
       view.opts.volumeKeys ? 'Volume down goes forward and volume up goes back.' : 'Turn on volume keys in the options to turn pages with the phone buttons.',
       'Your place is saved. Open the chapter again to continue where you stopped.'
@@ -329,7 +333,7 @@ export function mountReader(host, { chapterId, context, settings, loadPages, onC
   }
 
   function overlaysMarkup() {
-    return `${view.opts.showClock ? '<div class="reader-clock" id="readerClock"></div>' : ''}${autoPillMarkup()}${view.sheetOpen ? sheetMarkup() : ''}${view.tips ? tipsMarkup() : ''}`;
+    return `${view.opts.showClock ? '<div class="reader-clock" id="readerClock"></div>' : ''}<div id="readerZoomPill">${zoomPillMarkup()}</div>${autoPillMarkup()}${view.sheetOpen ? sheetMarkup() : ''}${view.tips ? tipsMarkup() : ''}`;
   }
 
   function renderOverlays() {
@@ -358,11 +362,12 @@ export function mountReader(host, { chapterId, context, settings, loadPages, onC
     const slots = view.mode === 'scroll'
       ? Array.from({ length: view.total }, (_, index) => slotMarkup(index)).join('') + endCardMarkup()
       : (view.ended ? endCardMarkup() : slotMarkup(view.page));
-    host.innerHTML = `${barMarkup()}<div class="reader-stage" data-mode="${view.mode}" data-fit="${view.fit}" tabindex="0">${slots}${view.mode === 'scroll' ? attribution() : ''}</div>${footMarkup()}<div class="reader-overlays" id="readerOverlays">${overlaysMarkup()}</div>`;
+    host.innerHTML = `${barMarkup()}<div class="reader-stage" data-mode="${view.mode}" data-fit="${view.fit}" data-zoomed="${isZoomed(view.zoom)}" style="--zoom:${clampZoom(view.zoom)}" tabindex="0">${slots}${view.mode === 'scroll' ? attribution() : ''}</div>${footMarkup()}<div class="reader-overlays" id="readerOverlays">${overlaysMarkup()}</div>`;
     host.querySelectorAll('.reader-img').forEach(bindImage);
     const stage = host.querySelector('.reader-stage');
     if (view.mode === 'scroll') setupScrollMode(stage);
     else setupPagedMode();
+    if (stage && isZoomed(view.zoom) && view.mode !== 'scroll') { stage.scrollLeft = 0; stage.scrollTop = 0; }
     if (!view.sheetOpen && !view.tips) stage?.focus({ preventScroll: true });
     updateClock();
     scheduleAuto();
@@ -456,10 +461,72 @@ export function mountReader(host, { chapterId, context, settings, loadPages, onC
   // In right-to-left mode the "next page" direction is leftwards.
   const forwardDelta = side => (view.mode === 'rtl' ? (side === 'left' ? 1 : -1) : (side === 'left' ? -1 : 1));
 
+  // ---- zoom ---------------------------------------------------------------------------
+  // Zooming makes the pages wider (a CSS variable), so the stage's own scrolling pans them in every direction.
+  function zoomPillMarkup() {
+    if (!isZoomed(view.zoom)) return '';
+    return `<div class="reader-zoom-pill"><span>${escapeHtml(formatZoom(view.zoom))}</span><button class="button-subtle" data-reader="zoom-reset" aria-label="Back to fit">Reset</button></div>`;
+  }
+
+  function updateZoomUi() {
+    const stage = host.querySelector('.reader-stage');
+    if (stage) { stage.dataset.zoomed = String(isZoomed(view.zoom)); stage.style.setProperty('--zoom', String(clampZoom(view.zoom))); }
+    const pill = host.querySelector('#readerZoomPill');
+    if (pill) pill.innerHTML = zoomPillMarkup();
+    const label = host.querySelector('.reader-zoom-label');
+    if (label) label.textContent = formatZoom(view.zoom);
+  }
+
+  // focus: where the fingers are (px inside the stage). Keeps that spot of the page under the fingers.
+  function setZoom(next, focus = null) {
+    const stage = host.querySelector('.reader-stage');
+    const target = clampZoom(next);
+    if (target === view.zoom && !focus) return;
+    let anchorX = 0; let anchorY = 0;
+    if (stage && focus) {
+      anchorX = (stage.scrollLeft + focus.x) / Math.max(1, stage.scrollWidth);
+      anchorY = (stage.scrollTop + focus.y) / Math.max(1, stage.scrollHeight);
+    }
+    view.zoom = target;
+    updateZoomUi();
+    if (stage && focus) {
+      stage.scrollLeft = scrollToKeepFocus(anchorX, stage.scrollWidth, focus.x, stage.clientWidth);
+      stage.scrollTop = scrollToKeepFocus(anchorY, stage.scrollHeight, focus.y, stage.clientHeight);
+    } else if (stage && !isZoomed(target)) { stage.scrollLeft = 0; }
+  }
+
+  const stageFocus = (stage, clientX, clientY) => { const rect = stage.getBoundingClientRect(); return { x: clientX - rect.left, y: clientY - rect.top }; };
+  const fingerGap = touches => Math.hypot(touches[0].clientX - touches[1].clientX, touches[0].clientY - touches[1].clientY);
+
+  function handleTouchStart(event) {
+    const stage = event.target.closest?.('.reader-stage');
+    if (!stage || event.touches.length !== 2) return;
+    const [a, b] = event.touches;
+    view.pinch = { startZoom: view.zoom, startGap: fingerGap(event.touches), cx: (a.clientX + b.clientX) / 2, cy: (a.clientY + b.clientY) / 2 };
+    view.lastTap = null;
+    host.addEventListener('touchmove', handleTouchMove, { passive: false });
+    if (auto.on && !auto.paused) setAutoPaused(true);
+  }
+
+  function handleTouchMove(event) {
+    if (!view.pinch || event.touches.length !== 2) return;
+    event.preventDefault();
+    const stage = host.querySelector('.reader-stage');
+    if (!stage) return;
+    const [a, b] = event.touches;
+    const next = pinchZoom(view.pinch.startZoom, view.pinch.startGap, fingerGap(event.touches));
+    setZoom(next, stageFocus(stage, (a.clientX + b.clientX) / 2, (a.clientY + b.clientY) / 2));
+  }
+
+  function handleTouchEnd(event) {
+    if (view.pinch && event.touches.length < 2) { view.pinch = null; view.lastTap = null; host.removeEventListener('touchmove', handleTouchMove); }
+  }
+
   function setMode(mode) {
     if (!MODES.includes(mode) || mode === view.mode) return;
     view.mode = mode;
     view.ended = false;
+    view.zoom = MIN_ZOOM;
     onSetting?.('readerMode', mode);
     render();
   }
@@ -622,6 +689,9 @@ export function mountReader(host, { chapterId, context, settings, loadPages, onC
         case 'retry-image': retryImage(Number(control.dataset.index)); break;
         case 'sheet-open': view.sheetOpen = true; renderOverlays(); break;
         case 'sheet-close': view.sheetOpen = false; renderOverlays(); break;
+        case 'zoom-in': setZoom(stepZoom(view.zoom, 1)); break;
+        case 'zoom-out': setZoom(stepZoom(view.zoom, -1)); break;
+        case 'zoom-reset': setZoom(MIN_ZOOM); break;
         case 'set-mode': setMode(value); break;
         case 'set-quality': setQuality(value); break;
         case 'set-orientation': setOrientationOption(value); break;
@@ -643,8 +713,19 @@ export function mountReader(host, { chapterId, context, settings, loadPages, onC
     if (!stage || event.target.closest('a, button, input')) return;
     const rect = stage.getBoundingClientRect();
     const x = (event.clientX - rect.left) / Math.max(1, rect.width);
-    if (view.mode !== 'scroll' && !view.ended && x < 0.3) goPaged(forwardDelta('left'));
-    else if (view.mode !== 'scroll' && !view.ended && x > 0.7) goPaged(forwardDelta('right'));
+    // A second quick tap zooms. In the page-by-page modes the edges turn pages, so only the middle can zoom there.
+    const now = Date.now();
+    const second = isDoubleTap(view.lastTap, now, event.clientX, event.clientY);
+    view.lastTap = { time: now, x: event.clientX, y: event.clientY };
+    if (second && !view.ended && (view.mode === 'scroll' || (x >= 0.3 && x <= 0.7))) {
+      view.lastTap = null;
+      toggleUi(); // the first tap of the pair already toggled the bars: put them back
+      setZoom(doubleTapTarget(view.zoom), stageFocus(stage, event.clientX, event.clientY));
+      return;
+    }
+    // While zoomed in, taps never turn the page by accident. Reset the zoom (or use the slider or keys) to move on.
+    if (view.mode !== 'scroll' && !view.ended && !isZoomed(view.zoom) && x < 0.3) goPaged(forwardDelta('left'));
+    else if (view.mode !== 'scroll' && !view.ended && !isZoomed(view.zoom) && x > 0.7) goPaged(forwardDelta('right'));
     else toggleUi();
   }
 
@@ -699,6 +780,9 @@ export function mountReader(host, { chapterId, context, settings, loadPages, onC
       const action = volumeAction(event.key);
       if (action) { event.preventDefault(); step(action === 'next' ? 1 : -1); return; }
     }
+    if (event.key === '+' || event.key === '=') { event.preventDefault(); setZoom(stepZoom(view.zoom, 1)); return; }
+    if (event.key === '-') { event.preventDefault(); setZoom(stepZoom(view.zoom, -1)); return; }
+    if (event.key === '0') { event.preventDefault(); setZoom(MIN_ZOOM); return; }
     if (view.mode === 'scroll') return;
     if (event.key === 'ArrowLeft') { event.preventDefault(); goPaged(forwardDelta('left')); }
     else if (event.key === 'ArrowRight') { event.preventDefault(); goPaged(forwardDelta('right')); }
@@ -716,6 +800,9 @@ export function mountReader(host, { chapterId, context, settings, loadPages, onC
   host.addEventListener('input', handleInput);
   host.addEventListener('change', handleChange);
   host.addEventListener('touchstart', handleUserScroll, { passive: true });
+  host.addEventListener('touchstart', handleTouchStart, { passive: true });
+  host.addEventListener('touchend', handleTouchEnd, { passive: true });
+  host.addEventListener('touchcancel', handleTouchEnd, { passive: true });
   host.addEventListener('wheel', handleUserScroll, { passive: true });
   document.addEventListener('keydown', handleKey);
   window.addEventListener('tmlvolume', handleVolumeEvent);
@@ -762,6 +849,10 @@ export function mountReader(host, { chapterId, context, settings, loadPages, onC
       host.removeEventListener('input', handleInput);
       host.removeEventListener('change', handleChange);
       host.removeEventListener('touchstart', handleUserScroll);
+      host.removeEventListener('touchstart', handleTouchStart);
+      host.removeEventListener('touchmove', handleTouchMove);
+      host.removeEventListener('touchend', handleTouchEnd);
+      host.removeEventListener('touchcancel', handleTouchEnd);
       host.removeEventListener('wheel', handleUserScroll);
       document.removeEventListener('keydown', handleKey);
       window.removeEventListener('tmlvolume', handleVolumeEvent);

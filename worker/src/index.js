@@ -200,12 +200,16 @@ function isAllowedContent(item, allowAdult = false) {
 
 // The normal search request excludes the blocked tags, so safe-rated tagged titles are asked for separately: safe only,
 // first page of a text search, merged into the results. Best effort: a failure here never breaks a search.
-async function taggedSafeMatches(query, allowAdult = false) {
+async function taggedSafeMatches(query, allowAdult = false, filters = {}) {
   const text = String(query || "").trim();
   if (!text) return [];
   const params = [["limit", PAGE_SIZE], ["title", text], ["order[relevance]", "desc"], ["contentRating[]", "safe"], ["includedTagsMode", "OR"],
     ["includes[]", "cover_art"], ["includes[]", "author"], ["includes[]", "artist"]];
   for (const id of BLOCKED_TAG_IDS) params.push(["includedTags[]", id]);
+  if (filters.chapters) {
+    params.push(["hasAvailableChapters", "true"]);
+    if (filters.chapters.language) params.push(["availableTranslatedLanguage[]", filters.chapters.language]);
+  }
   try {
     const payload = await fetchMangaDex("/manga", params);
     return (payload.data || []).filter(item => isAllowedContent(item, allowAdult) && isTaggedAndAllowed(item));
@@ -257,19 +261,58 @@ async function fetchMangaDexOnce(url, cache) {
   }
 }
 
+// Last good answers are kept for a day. When MangaDex is down, too slow or rate-limiting us, the person gets the last
+// good copy of the same request instead of an error (the app still shows what it showed before). Only cacheable
+// catalogue data is kept: never the short-lived page-image addresses.
+const STALE_KEY_BASE = "https://stale.tokyo-manga-lab.invalid/";
+const STALE_SECONDS = 24 * 60 * 60;
+const staleKey = url => new Request(STALE_KEY_BASE + encodeURIComponent(url.toString()));
+const staleCache = () => (typeof caches !== "undefined" && caches.default ? caches.default : null);
+
+async function rememberGood(url, payload) {
+  const store = staleCache();
+  if (!store) return;
+  try {
+    await store.put(staleKey(url), new Response(JSON.stringify(payload), { headers: { "Content-Type": "application/json", "Cache-Control": `public, max-age=${STALE_SECONDS}` } }));
+  } catch { /* remembering is best effort */ }
+}
+
+async function lastGood(url) {
+  const store = staleCache();
+  if (!store) return null;
+  try {
+    const hit = await store.match(staleKey(url));
+    return hit ? await hit.json() : null;
+  } catch { return null; }
+}
+
+// A failure worth falling back for: MangaDex could not be reached, timed out, rate-limited us, or had a server error.
+const isOutage = error => error.status === undefined || error.status === 429 || error.status >= 500;
+
 // One quiet retry for a dropped connection or a gateway error (502/503/504). Anything else, including rate limits and
-// "not found", is passed straight back so the app can show the right message.
+// "not found", is passed straight back (after trying the last good copy for outages) so the app can show the right message.
 async function fetchMangaDex(path, params = {}, { cache = true } = {}) {
   const url = new URL(API_BASE + path);
   for (const [key, value] of params) url.searchParams.append(key, String(value));
+  let payload;
   try {
-    return await fetchMangaDexOnce(url, cache);
+    try {
+      payload = await fetchMangaDexOnce(url, cache);
+    } catch (error) {
+      const transient = error.status === undefined || error.status === 502 || error.status === 503 || error.status === 504;
+      if (!transient) throw error;
+      await new Promise(resolve => setTimeout(resolve, 350));
+      payload = await fetchMangaDexOnce(url, cache);
+    }
   } catch (error) {
-    const transient = error.status === undefined || error.status === 502 || error.status === 503 || error.status === 504;
-    if (!transient) throw error;
-    await new Promise(resolve => setTimeout(resolve, 350));
-    return fetchMangaDexOnce(url, cache);
+    if (cache && isOutage(error)) {
+      const old = await lastGood(url);
+      if (old) return old;
+    }
+    throw error;
   }
+  if (cache) await rememberGood(url, payload);
+  return payload;
 }
 
 function ratingParams(allowAdult) {
@@ -286,7 +329,12 @@ function searchFilters(url) {
     .filter(id => !BLOCKED_TAG_IDS.includes(id)).slice(0, MAX_GENRE_FILTERS);
   const status = String(url.searchParams.get("status") || "").toLowerCase();
   const sort = String(url.searchParams.get("sort") || "").toLowerCase();
-  return { genres, status: STATUS_VALUES.includes(status) ? status : "", sort: Object.hasOwn(SORT_KEYS, sort) ? sort : "" };
+  // hasChapters=1 asks MangaDex to leave out titles that have no readable chapters (in `lang`, when one is given).
+  // Without it nothing changes, so older app versions keep working exactly as before.
+  const lang = String(url.searchParams.get("lang") || "").toLowerCase();
+  const chapters = url.searchParams.get("hasChapters") === "1"
+    ? { language: /^[a-z]{2,3}(-[a-z]{2})?$/.test(lang) ? lang : "" } : null;
+  return { genres, status: STATUS_VALUES.includes(status) ? status : "", sort: Object.hasOwn(SORT_KEYS, sort) ? sort : "", chapters };
 }
 
 function isFiltered(filters) {
@@ -305,6 +353,10 @@ function mangaSearchParams(query, page, allowAdult = false, filters = {}) {
   for (const id of filters.genres || []) params.push(["includedTags[]", id]);
   if (filters.genres?.length) params.push(["includedTagsMode", "AND"]);
   if (filters.status) params.push(["status[]", filters.status]);
+  if (filters.chapters) {
+    params.push(["hasAvailableChapters", "true"]);
+    if (filters.chapters.language) params.push(["availableTranslatedLanguage[]", filters.chapters.language]);
+  }
   if (query) params.push(["title", query]);
   if (filters.sort) params.push([`order[${SORT_KEYS[filters.sort]}]`, "desc"]);
   else if (query) params.push(["order[relevance]", "desc"]);
@@ -314,7 +366,7 @@ function mangaSearchParams(query, page, allowAdult = false, filters = {}) {
 
 async function doMangaSearch(query, page, allowAdult = false, filters = {}) {
   const payload = await fetchMangaDex("/manga", mangaSearchParams(query, page, allowAdult, filters));
-  const extra = page === 1 && !isFiltered(filters) ? await taggedSafeMatches(query, allowAdult) : [];
+  const extra = page === 1 && !isFiltered(filters) ? await taggedSafeMatches(query, allowAdult, filters) : [];
   const items = withTagged(extra, (payload.data || []).filter(item => isAllowedContent(item, allowAdult)), query).map(normalizeManga);
   const total = Math.max(0, Number(payload.total) || items.length);
   return {
@@ -487,7 +539,7 @@ async function handleLegacyManga(url, origin) {
   try {
     const filters = searchFilters(url);
     const payload = await fetchMangaDex("/manga", mangaSearchParams(title, page, allowAdult, filters));
-    const extra = page === 1 && !isFiltered(filters) ? await taggedSafeMatches(title, allowAdult) : [];
+    const extra = page === 1 && !isFiltered(filters) ? await taggedSafeMatches(title, allowAdult, filters) : [];
     const data = withTagged(extra, (payload.data || []).filter(item => isAllowedContent(item, allowAdult)), title).map(item => {
       const normalized = normalizeManga(item);
       return {
@@ -657,7 +709,16 @@ function malBearer(request) {
   return malTokenShape.test(token) ? token : "";
 }
 
-async function callMal(url, { method = "GET", token = "", form = null } = {}) {
+async function callMal(url, options = {}) {
+  const first = await callMalOnce(url, options).catch(error => ({ failed: error }));
+  const transient = first.failed || first.status === 502 || first.status === 503 || first.status === 504;
+  // Reads are repeated once after a dropped connection or a gateway error. Writes are not repeated here; the app queues them.
+  if (!transient || (options.method && options.method !== "GET")) { if (first.failed) throw first.failed; return first; }
+  await new Promise(resolve => setTimeout(resolve, 350));
+  return callMalOnce(url, options);
+}
+
+async function callMalOnce(url, { method = "GET", token = "", form = null } = {}) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15000);
   try {
