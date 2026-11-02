@@ -53,3 +53,13 @@ Stored in `chapterProgress` (`mangadex-chapter:<uuid>`): last page, total pages,
 - Volume keys, status bar and rotation are untested on a real phone (verified with mocks and a stub compile only).
 - Needs the updated Worker deployed (see CHANGELOG 0.7.0).
 - Verified with mocked network in Chromium and unit tests. Not yet tried against live MangaDex or on a device.
+
+## Zoom (1.4.0)
+- **Pinch** with two fingers to zoom between 100% (fit) and 400%. The spot under your fingers stays put.
+- **Double-tap** the page to zoom to 250%, and again to go back. In the page-by-page modes only the middle of the screen zooms, because the edges turn pages.
+- **Buttons:** Reader options > Zoom has − and +. While zoomed, a small pill shows the zoom with a **Reset** button. On a keyboard, + and - zoom and 0 resets.
+- **Panning:** drag to move around the zoomed page, in every direction, up to every edge.
+- **While zoomed in, taps do not turn the page**, so a tap on a panel never flips it by accident. Reset the zoom, or use the slider, the volume keys or the arrow keys, to move on. A new page starts at its top-left corner.
+- Zoom is not remembered between chapters, and changing the reading mode resets it.
+- Code: `src/features/reader/reader-zoom.js` (the maths, tested in `tests/reader-zoom.test.mjs`), wiring in `reader-view.js`, styles in `css/reader.css`.
+

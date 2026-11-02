@@ -98,3 +98,7 @@ Added in database version 4 (1.1.0). `updateWatch` (keyPath `id` = the content i
 
 ### MyAnimeList records (1.2.0)
 No new stores and no database upgrade. `accountLinks` gets a row with `provider: "mal"` (tokens, client ID, viewer, `lastSync`, `profile`) and a short-lived `mal-pending` row while sign-in is open (verifier, state). `syncLinks` rows with `provider: "mal"` (and `mal-track` for the Tracking panel copy) and `syncOutbox` rows with `provider: "mal"` mirror the AniList ones. MyAnimeList ids live in `sourceEntries` as `mal:<id>`; a MangaDex title that lists a MyAnimeList id gets that row too. None of this is in a backup.
+
+### Privacy lock record (1.4.0)
+`accountLinks` row with `provider: "privacy-lock"`: `salt`, `hash` (PBKDF2-SHA-256), `iterations`, `createdAt`, `failures`, `lockedUntil`. Never part of a backup. The settings `privacyLockDelay` (seconds as text) and `privacyHideRecents` (boolean) are normal settings and are backed up.
+

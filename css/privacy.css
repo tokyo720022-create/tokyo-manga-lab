@@ -1,0 +1,24 @@
+/* PIN lock, blank cover and the screens for choosing a PIN. Full screen, above everything (it is a modal dialog). */
+.privacy-dialog { position: fixed; inset: 0; width: 100vw; max-width: 100vw; height: 100dvh; max-height: 100dvh; margin: 0; padding: 0; border: 0; background: var(--bg); color: var(--text); overflow: auto; }
+.privacy-dialog[open] { display: flex; align-items: center; justify-content: center; }
+.privacy-dialog::backdrop { background: var(--bg); }
+.privacy-card { width: min(340px, 100%); padding: 24px var(--gutter) calc(24px + env(safe-area-inset-bottom)); display: grid; gap: 12px; text-align: center; }
+.privacy-cover { min-height: 40vh; align-content: center; }
+.privacy-logo { width: 72px; height: 72px; margin: 0 auto; border-radius: 18px; object-fit: cover; box-shadow: 0 0 0 2px #ffffff1a; }
+.privacy-card h2 { margin: 4px 0 0; font-size: 1.2rem; }
+.privacy-sub { margin: 0; color: var(--muted); font-size: .84rem; line-height: 1.45; }
+.privacy-dots { display: flex; justify-content: center; gap: 12px; min-height: 20px; margin: 6px 0 2px; }
+.privacy-dot { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--faint); background: transparent; }
+.privacy-dot.is-on { background: var(--accent); border-color: var(--accent); }
+.privacy-message { margin: 0; min-height: 1.3em; color: var(--danger); font-size: .84rem; }
+.privacy-pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.privacy-key { min-height: 58px; border-radius: 16px; border: 1px solid var(--line); background: var(--raised); color: var(--text); font: inherit; font-size: 1.4rem; font-weight: 600; cursor: pointer; }
+.privacy-key:active { background: var(--accent-soft); }
+.privacy-key:focus-visible, .privacy-cancel:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.privacy-key-small { font-size: 1rem; }
+.privacy-key-ok { background: var(--accent); color: var(--accent-ink); border-color: transparent; }
+.privacy-cancel { justify-self: center; }
+.privacy-hint { margin: 4px 0 0; color: var(--faint); font-size: .74rem; line-height: 1.4; }
+.privacy-card.is-shaking { animation: privacy-shake .35s; }
+@keyframes privacy-shake { 20%, 60% { transform: translateX(-8px); } 40%, 80% { transform: translateX(8px); } }
+@media (prefers-reduced-motion: reduce) { .privacy-card.is-shaking { animation: none; } }

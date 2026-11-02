@@ -1,4 +1,5 @@
 import { ANILIST_API_URL, LIST_CHUNK_SIZE, MAX_LIST_CHUNKS } from './anilist-config.js';
+import { withRetry } from '../../shared/retry.js';
 
 export class AniListError extends Error {
   constructor(message, { status = 0, code = 'ANILIST_ERROR', retryAfter = 0 } = {}) {
@@ -51,10 +52,13 @@ const SEARCH_QUERY = `query ($search: String, $isAdult: Boolean) {
   }
 }`;
 
-export function createAniListClient({ token, fetchImpl = (...args) => fetch(...args), apiUrl = ANILIST_API_URL, timeoutMs = 25000 } = {}) {
+export function createAniListClient({ token, fetchImpl = (...args) => fetch(...args), apiUrl = ANILIST_API_URL, timeoutMs = 25000, retryDelays, sleep } = {}) {
   if (!token) throw new AniListError('Not signed in to AniList.', { code: 'UNAUTHORIZED' });
 
-  async function request(query, variables = {}) {
+  // Every AniList call (reads and the idempotent "set this entry" save) retries quietly on connection drops, 5xx and short rate limits.
+  const request = (query, variables = {}) => withRetry(() => requestOnce(query, variables), { delays: retryDelays, sleep });
+
+  async function requestOnce(query, variables = {}) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     let response;

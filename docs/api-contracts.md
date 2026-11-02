@@ -15,6 +15,9 @@ All v1 success responses include `meta.apiVersion = "1"` and a `requestId`. Erro
 ### `GET /api/v1/sources`
 Returns source IDs and capability flags. For the current connector, `search`, `titleDetails`, `chapters` and `chapterContent` are supported; the Worker's `offlineDownloads` flag is false because the Worker never downloads or stores anything; the app saves chapters itself (`docs/DOWNLOADS.md`). `chapterContent` means the Worker can return the *addresses* of chapter pages; it never relays image bytes.
 
+### Skipping titles with no chapters (1.3.0)
+`/manga` and `/api/v1/search` accept `hasChapters=1` and an optional `lang=<two or three letter code>`. With `hasChapters=1` the Worker asks MangaDex for `hasAvailableChapters=true` (and `availableTranslatedLanguage[]=<lang>` when a valid code is given), so titles with nothing to read are left out and `total` counts only the rest. The extra lookup for safe-rated tagged titles uses the same filter. Leaving the parameters out changes nothing. An invalid `lang` is ignored.
+
 ### `GET /api/v1/search?query={query}&type=manga&page={page}`
 Returns `{ data: ContentItem[], pagination, meta }`. The normalized ContentItem includes `sourceId`, `externalId`, `contentType`, `title`, `alternateTitles`, `description`, `coverUrl`, `authors`, `artists`, `genres`, `tags`, `publicationStatus`, `releaseYear`, `language`, `sourceUrl`, and `contentRating`.
 

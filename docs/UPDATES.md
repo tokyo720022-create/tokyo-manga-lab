@@ -35,3 +35,6 @@ Checks send only MangaDex title ids to your own Worker. Nothing is uploaded else
 
 ## Code map
 `src/features/updates/`: `update-plan.js` (pure rules), `update-checker.js` (a run), `update-controller.js` (schedule, inbox, auto-download, native bridge), `update-view.js` (Home section). Storage: `src/data/repositories/update-repository.js`. Native: `native/android/updates/`.
+
+## Check that the Android add-on compiles
+The optional background checker has never been compiled. Run the **Check Android add-ons** workflow first (see `docs/ANDROID-NATIVE-DOWNLOADS.md`); it switches both add-ons on for a throw-away build and reports whether they compile. Only then add `native/android/UPDATES_ENABLED`.

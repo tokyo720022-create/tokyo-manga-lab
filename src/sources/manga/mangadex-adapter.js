@@ -47,8 +47,8 @@ export const mangaDexAdapter = Object.freeze({
   label: 'MangaDex',
   contentTypes: ['manga'],
   capabilities: { search: true, titleDetails: true, chapters: true, chapterContent: true, offlineDownloads: true },
-  async search(query = '', page = 1, { signal, genres = [], status = '', sort = '' } = {}) {
-    const payload = await apiClient.mangaSearch({ query, page, genres, status, sort, signal });
+  async search(query = '', page = 1, { signal, genres = [], status = '', sort = '', includeEmpty = false } = {}) {
+    const payload = await apiClient.mangaSearch({ query, page, genres, status, sort, includeEmpty, signal });
     if (!payload || !Array.isArray(payload.data)) throw new Error('MangaDex returned data in an unexpected format.');
     const items = payload.data.map(normalizeManga).filter(item => item.externalId);
     const total = Math.max(0, Number(payload.total) || 0);

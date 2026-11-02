@@ -22,3 +22,6 @@ Delete `native/android/ENABLED` and build again. The app is identical without it
 - On Android 13 and newer the notification is hidden until notifications are allowed for the app in system settings. The service runs either way.
 - Android may refuse to start a foreground service while the app is in the background; the app then just downloads while it is on screen.
 - Android 15 limits "data sync" foreground services to about six hours a day.
+
+## Check that it compiles (no phone needed)
+Run the **Check Android add-ons** workflow (Actions tab > Check Android add-ons > Run workflow). It builds a throw-away debug app with both add-ons switched on and reports **Passed** or **Failed** in its summary. It changes nothing in your repository and does not affect your normal APK. Only after it passes, add the empty file `native/android/ENABLED` to turn the add-on on in real builds. Paste the workflow from `docs/workflows/check-android-addons.yml` into `.github/workflows/` once.

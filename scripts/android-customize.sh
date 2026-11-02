@@ -153,6 +153,53 @@ else
   echo "WARN: MainActivity.java not found; volume-key paging will not be available in this build"
 fi
 
+# --- Privacy screen: let the web app blank the app in the recent-apps list (and block screenshots) -------------------
+# Adds a small bridge named TmlPrivacy to MainActivity. The web app calls TmlPrivacy.setSecure(true/false) from the
+# "Hide the app in recent apps" setting. Plain Java, and the same edit style as the volume-key hook above.
+if [ -n "${MAIN:-}" ]; then
+python3 - "$MAIN" <<'PY'
+import re, sys
+path = sys.argv[1]
+text = open(path, encoding="utf-8").read()
+if "TmlPrivacy" in text:
+    print("Privacy hook already present")
+    sys.exit(0)
+opening = re.search(r"public\s+class\s+MainActivity\s+extends\s+BridgeActivity\s*\{", text)
+if not opening:
+    print("WARN: MainActivity has an unexpected shape; hiding the app in recent apps will not be available in this build")
+    sys.exit(0)
+members = """
+    public class TmlPrivacyBridge {
+        @android.webkit.JavascriptInterface
+        public void setSecure(final boolean on) {
+            runOnUiThread(new Runnable() {
+                @Override
+                public void run() {
+                    if (on) {
+                        getWindow().addFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE);
+                    } else {
+                        getWindow().clearFlags(android.view.WindowManager.LayoutParams.FLAG_SECURE);
+                    }
+                }
+            });
+        }
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        if (getBridge() != null && getBridge().getWebView() != null) {
+            getBridge().getWebView().addJavascriptInterface(new TmlPrivacyBridge(), "TmlPrivacy");
+        }
+    }
+"""
+text = text[:opening.end()] + members + text[opening.end():]
+open(path, "w", encoding="utf-8").write(text)
+print("Added privacy hook to MainActivity")
+PY
+  grep -q "TmlPrivacy" "$MAIN" && echo "Privacy hook present" || echo "WARN: privacy hook missing after edit"
+fi
+
 # --- Optional: Kotlin download-notification plugin (keeps downloads running with the screen off) ---------------
 # Off unless the file native/android/ENABLED exists. See docs/ANDROID-NATIVE-DOWNLOADS.md.
 if [ -f native/android/ENABLED ]; then

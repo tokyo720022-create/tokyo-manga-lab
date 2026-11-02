@@ -380,3 +380,79 @@ test('a client that sends too many requests is told to wait, other clients are u
   const health = await worker.fetch(new Request('https://worker.test/health', { headers: { 'CF-Connecting-IP': '203.0.113.7' } }));
   assert.equal(health.status, 200);
 });
+
+function fakeEdgeCache(t) {
+  const store = new Map();
+  const original = globalThis.caches;
+  globalThis.caches = { default: {
+    put: async (request, response) => { store.set(request.url, await response.text()); },
+    match: async request => store.has(request.url) ? new Response(store.get(request.url), { headers: { 'Content-Type': 'application/json' } }) : undefined
+  } };
+  t.after(() => { if (original === undefined) delete globalThis.caches; else globalThis.caches = original; });
+  return store;
+}
+
+test('when MangaDex is down the last good answer for the same request is served', async t => {
+  fakeEdgeCache(t);
+  let down = false;
+  mockFetch(t, () => down ? jsonResponse({ result: 'error' }, 503) : jsonResponse({ data: [sampleManga()], total: 1 }));
+  const first = await worker.fetch(apiRequest('/api/v1/search?query=example'));
+  assert.equal(first.status, 200);
+  const good = await first.json();
+  down = true;
+  const second = await worker.fetch(apiRequest('/api/v1/search?query=example'));
+  assert.equal(second.status, 200, 'the app still gets its results');
+  assert.deepEqual((await second.json()).data.map(item => item.title), good.data.map(item => item.title));
+});
+
+test('rate limits also fall back to the last good answer, but never-seen requests still fail honestly', async t => {
+  fakeEdgeCache(t);
+  let limited = false;
+  mockFetch(t, () => limited ? jsonResponse({ result: 'error' }, 429) : jsonResponse({ data: [sampleManga()], total: 1 }));
+  await worker.fetch(apiRequest('/api/v1/search?query=example'));
+  limited = true;
+  assert.equal((await worker.fetch(apiRequest('/api/v1/search?query=example'))).status, 200);
+  const unseen = await worker.fetch(apiRequest('/api/v1/search?query=something-new'));
+  assert.notEqual(unseen.status, 200, 'nothing was remembered for this request, so the failure is shown');
+});
+
+test('"not found" is never replaced by an old answer', async t => {
+  fakeEdgeCache(t);
+  let missing = false;
+  mockFetch(t, () => missing ? jsonResponse({ result: 'error' }, 404) : jsonResponse({ data: sampleManga() }));
+  await worker.fetch(apiRequest(`/api/v1/manga/${MANGA_ID}`));
+  missing = true;
+  const after = await worker.fetch(apiRequest(`/api/v1/manga/${MANGA_ID}`));
+  assert.equal(after.status, 404);
+});
+
+test('the Worker still works where no edge cache exists', async t => {
+  const original = globalThis.caches;
+  delete globalThis.caches;
+  t.after(() => { if (original !== undefined) globalThis.caches = original; });
+  mockFetch(t, () => jsonResponse({ data: [sampleManga()], total: 1 }));
+  assert.equal((await worker.fetch(apiRequest('/api/v1/search?query=example'))).status, 200);
+});
+
+test('hasChapters=1 asks MangaDex to skip titles with no chapters, in the chosen language', async t => {
+  const seen = [];
+  mockFetch(t, url => { seen.push(url); return jsonResponse({ data: [sampleManga()], total: 1 }); });
+  const response = await worker.fetch(apiRequest('/api/v1/search?query=example&hasChapters=1&lang=es'));
+  assert.equal(response.status, 200);
+  const main = seen.find(url => url.pathname === '/manga' && url.searchParams.get('title') === 'example' && !url.searchParams.has('includedTags[]'));
+  assert.equal(main.searchParams.get('hasAvailableChapters'), 'true');
+  assert.deepEqual(main.searchParams.getAll('availableTranslatedLanguage[]'), ['es']);
+  assert.ok(seen.filter(url => url.searchParams.has('includedTags[]')).every(url => url.searchParams.get('hasAvailableChapters') === 'true'), 'the tagged-titles lookup is filtered the same way');
+});
+
+test('without hasChapters nothing is filtered, and a bad language is dropped', async t => {
+  const seen = [];
+  mockFetch(t, url => { seen.push(url); return jsonResponse({ data: [], total: 0 }); });
+  await worker.fetch(apiRequest('/api/v1/search?query=example'));
+  assert.ok(seen.every(url => !url.searchParams.has('hasAvailableChapters')), 'older apps get the same results as before');
+  seen.length = 0;
+  await worker.fetch(apiRequest('/manga?q=example&hasChapters=1&lang=%3Cscript%3E'));
+  const main = seen.find(url => url.searchParams.get('title') === 'example');
+  assert.equal(main.searchParams.get('hasAvailableChapters'), 'true');
+  assert.equal(main.searchParams.has('availableTranslatedLanguage[]'), false, 'an invalid language code is ignored');
+});
