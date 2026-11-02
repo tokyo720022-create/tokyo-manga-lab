@@ -121,6 +121,32 @@ jobs:
         working-directory: android
         run: ./gradlew assembleDebug --no-daemon
 
+      - name: Sign the APK with the saved key
+        # Gradle ignored the saved key on the last run (it signed with its own random key),
+        # so the finished APK is signed again here with apksigner, which always uses the key we give it.
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_BASE64 }}
+        run: |
+          set -e
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "No saved key (random-key build), leaving the APK as Gradle signed it."
+            exit 0
+          fi
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+          BT="$(ls -d "$SDK"/build-tools/*/ | sort -V | tail -n 1)"
+          echo "Using build-tools: $BT"
+          IN="android/app/build/outputs/apk/debug/app-debug.apk"
+          ALIGNED="android/app/build/outputs/apk/debug/app-debug-aligned.apk"
+          "$BT/zipalign" -f -p 4 "$IN" "$ALIGNED"
+          "$BT/apksigner" sign \
+            --ks "$HOME/.android/debug.keystore" \
+            --ks-pass pass:android \
+            --ks-key-alias androiddebugkey \
+            --key-pass pass:android \
+            --out "$IN" "$ALIGNED"
+          rm -f "$ALIGNED" "$IN.idsig"
+          "$BT/apksigner" verify --verbose "$IN" | head -n 8
+
       - name: Rename APK
         run: |
           VERSION_NAME="$(node -p "require('./package.json').version")"
