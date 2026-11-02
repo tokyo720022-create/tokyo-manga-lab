@@ -74,17 +74,48 @@ jobs:
       - name: Use the saved signing key
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_DEBUG_KEYSTORE_BASE64 }}
+          EXPECTED_SHA256: "5D:95:DD:98:36:04:94:58:F3:A7:A2:E3:F5:7A:AF:D0:22:5A:E8:45:4B:AB:D1:6D:15:F6:94:04:AE:29:2E:E2"
         run: |
-          if [ -n "$KEYSTORE_B64" ]; then
-            mkdir -p ~/.android
-            printf '%s' "$KEYSTORE_B64" | base64 -d > ~/.android/debug.keystore
-            echo "Using the saved signing key, so this APK installs over older builds."
-          elif [ "${{ inputs.allow_random_key }}" = "true" ]; then
-            echo "::warning::Building with a random signing key because you asked for it. This APK will NOT install over an older build."
-          else
-            echo "::error::The secret ANDROID_DEBUG_KEYSTORE_BASE64 is missing, so this APK would get a random signing key and Android would refuse to install it over your current app (\"App not installed as package conflicts with an existing package\"). Add the secret (docs/SIGNING.md) and run again. To build anyway, run the workflow by hand and tick allow_random_key."
+          if [ -z "$KEYSTORE_B64" ]; then
+            if [ "${{ inputs.allow_random_key }}" = "true" ]; then
+              echo "::warning::Building with a random signing key because you asked for it. This APK will NOT install over an older build."
+              exit 0
+            fi
+            echo "::error::The secret ANDROID_DEBUG_KEYSTORE_BASE64 is missing, so this APK would get a random signing key. Add the secret (docs/SIGNING.md) and run again. To build anyway, run the workflow by hand and tick allow_random_key."
             exit 1
           fi
+
+          mkdir -p ~/.android
+          rm -f ~/.android/debug.keystore
+          # tr removes spaces, quotes and line breaks that can sneak in when pasting on a phone
+          if ! printf '%s' "$KEYSTORE_B64" | tr -d ' \t\r\n"'"'"'' | base64 -d > ~/.android/debug.keystore 2> /tmp/b64.err; then
+            echo "::error::The secret ANDROID_DEBUG_KEYSTORE_BASE64 is not valid base64 (it was probably cut or changed when pasted). Paste the whole single line from debug-signing-key.txt again."
+            exit 1
+          fi
+
+          SIZE="$(wc -c < ~/.android/debug.keystore)"
+          if ! keytool -list -v -keystore ~/.android/debug.keystore -storepass android -alias androiddebugkey > /tmp/ks.txt 2>&1; then
+            echo "::error::The saved key decoded to $SIZE bytes but is not a readable keystore (expected about 2714 bytes, alias androiddebugkey, password android). The secret was probably cut off or changed when pasted. Paste the whole single line from debug-signing-key.txt again."
+            exit 1
+          fi
+
+          FP="$(grep -E "SHA256:" /tmp/ks.txt | head -n 1 | sed 's/.*SHA256: *//')"
+          {
+            echo "### Saved signing key (from the secret)"
+            echo ""
+            echo "Decoded size: $SIZE bytes (expected about 2714)"
+            echo ""
+            echo "SHA-256: \`$FP\`"
+            echo ""
+            echo "Expected:  \`$EXPECTED_SHA256\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "Saved key SHA-256: $FP"
+
+          if [ "$FP" != "$EXPECTED_SHA256" ]; then
+            echo "::error::The secret holds a different key than the Tokyo Manga Lab key (got ${FP:0:23}..., expected ${EXPECTED_SHA256:0:23}...). Phones with the right key will refuse this APK. Replace the secret with the single line from debug-signing-key.txt."
+            exit 1
+          fi
+          echo "Saved signing key is correct, so this APK installs over older builds signed with it."
 
       - name: Build debug APK
         working-directory: android
@@ -111,7 +142,12 @@ jobs:
             echo "An APK installs over an older one only when this value is the same. It should stay the same on every build."
           } >> "$GITHUB_STEP_SUMMARY"
           if [ "$FP" != "$EXPECTED_SHA256" ]; then
-            echo "::warning::This APK is signed with a different key than the Tokyo Manga Lab key (expected ${EXPECTED_SHA256:0:23}...). If your phone already has a build signed with the expected key it will say 'package conflicts with an existing package'. See docs/SIGNING.md."
+            if [ "${{ inputs.allow_random_key }}" = "true" ]; then
+              echo "::warning::This APK is signed with a different key than the Tokyo Manga Lab key (expected ${EXPECTED_SHA256:0:23}...)."
+            else
+              echo "::error::This APK is signed with a different key than the Tokyo Manga Lab key (got ${FP:0:23}..., expected ${EXPECTED_SHA256:0:23}...). It will not install over the app on your phone."
+              exit 1
+            fi
           fi
 
       - name: Upload APK artifact
